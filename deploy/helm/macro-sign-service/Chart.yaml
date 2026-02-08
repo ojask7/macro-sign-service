@@ -1,0 +1,18 @@
+apiVersion: v2
+name: macro-sign-service
+description: Enterprise-grade macro signing service for VBA digital signing
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Ojas K
+    url: https://github.com/ojask7
+keywords:
+  - macro
+  - signing
+  - vba
+  - security
+  - code-signing
+home: https://github.com/ojask7/macro-sign-service
+sources:
+  - https://github.com/ojask7/macro-sign-service
