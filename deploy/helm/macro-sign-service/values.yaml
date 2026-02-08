@@ -1,0 +1,163 @@
+# =============================================================================
+# Macro Sign Service - Helm Values
+# =============================================================================
+
+# Global settings
+global:
+  environment: production
+
+# ---------------------------------------------------------------------------
+# API Server
+# ---------------------------------------------------------------------------
+api:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/ojask7/macro-sign-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 8000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 512Mi
+  env:
+    APP_ENV: production
+    APP_PORT: "8000"
+    CERT_STORE_BACKEND: hashicorp_vault
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+
+# ---------------------------------------------------------------------------
+# Celery Worker
+# ---------------------------------------------------------------------------
+worker:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/ojask7/macro-sign-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  concurrency: 4
+  queues: "signing,verification,webhooks,default"
+
+# ---------------------------------------------------------------------------
+# Dashboard
+# ---------------------------------------------------------------------------
+dashboard:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/ojask7/macro-sign-dashboard
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Ingress
+# ---------------------------------------------------------------------------
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+    nginx.ingress.kubernetes.io/rate-limit-window: "1m"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: macro-sign.example.com
+      paths:
+        - path: /api
+          pathType: Prefix
+          backend: api
+        - path: /
+          pathType: Prefix
+          backend: dashboard
+  tls:
+    - secretName: macro-sign-tls
+      hosts:
+        - macro-sign.example.com
+
+# ---------------------------------------------------------------------------
+# PostgreSQL (using Bitnami subchart)
+# ---------------------------------------------------------------------------
+postgresql:
+  enabled: true
+  auth:
+    database: macrosign
+    username: macrosign
+    existingSecret: macro-sign-db-secret
+  primary:
+    persistence:
+      size: 10Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+
+# ---------------------------------------------------------------------------
+# Redis (using Bitnami subchart)
+# ---------------------------------------------------------------------------
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: false
+  master:
+    persistence:
+      size: 2Gi
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+# ---------------------------------------------------------------------------
+# Secrets
+# ---------------------------------------------------------------------------
+secrets:
+  # These should be overridden in production
+  appSecretKey: ""
+  jwtSecretKey: ""
+  databaseUrl: ""
+  # Reference to existing Kubernetes secrets
+  existingSecret: ""
+
+# ---------------------------------------------------------------------------
+# Service Account
+# ---------------------------------------------------------------------------
+serviceAccount:
+  create: true
+  name: macro-sign-service
+  annotations: {}
+
+# ---------------------------------------------------------------------------
+# Monitoring
+# ---------------------------------------------------------------------------
+monitoring:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 30s
+    path: /metrics

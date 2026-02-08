@@ -1,0 +1,133 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Request Rate (req/s)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(http_requests_total{service=\"macro-sign-service\"}[5m])",
+          "legendFormat": "{{method}} {{handler}}"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "id": 2,
+      "title": "Response Latency (p95)",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service=\"macro-sign-service\"}[5m]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{service=\"macro-sign-service\"}[5m]))",
+          "legendFormat": "p50"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "id": 3,
+      "title": "Total Requests",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(http_requests_total{service=\"macro-sign-service\"})"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+      "id": 4,
+      "title": "Error Rate",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "sum(rate(http_requests_total{status=~\"5..\",service=\"macro-sign-service\"}[5m])) / sum(rate(http_requests_total{service=\"macro-sign-service\"}[5m])) * 100"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "id": 5,
+      "title": "Active Connections",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "http_requests_in_progress{service=\"macro-sign-service\"}"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+      "id": 6,
+      "title": "Uptime",
+      "type": "stat",
+      "targets": [
+        {
+          "expr": "process_uptime_seconds{service=\"macro-sign-service\"}"
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 38,
+  "style": "dark",
+  "tags": ["macro-sign-service"],
+  "templating": { "list": [] },
+  "time": { "from": "now-6h", "to": "now" },
+  "title": "Macro Sign Service Overview",
+  "uid": "macro-sign-overview",
+  "version": 1
+}
