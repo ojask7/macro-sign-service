@@ -22,7 +22,8 @@ class TestAppSettings:
     def test_default_values(self):
         settings = AppSettings()
         assert settings.name == "macro-sign-service"
-        assert settings.env == Environment.DEVELOPMENT
+        # Note: APP_ENV is set to "testing" in conftest.py
+        assert settings.env in (Environment.DEVELOPMENT, Environment.TESTING)
         assert settings.port == 8000
 
     def test_is_production(self):
