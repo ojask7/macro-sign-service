@@ -1,5 +1,3 @@
-# macro-sign-service
-macro signing service for enterprise security use case that helps automate for speed and security
 # 🔐 Macro Sign Service
 
 > Enterprise-grade macro signing service that automates digital signing of Office macros (VBA) for speed, security, and compliance.
