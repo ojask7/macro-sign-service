@@ -308,12 +308,13 @@ async def list_api_keys(
     "/api-keys/{key_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Revoke API Key",
+    responses={204: {"description": "API key revoked successfully"}},
 )
 async def revoke_api_key(
     key_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+):
     """Revoke (deactivate) an API key."""
     result = await db.execute(
         select(APIKey).where(
