@@ -1,4 +1,10 @@
+'use client';
+
 import Link from 'next/link';
+
+const API_DOCS_URL = process.env.NEXT_PUBLIC_API_URL
+  ? `${process.env.NEXT_PUBLIC_API_URL}/api/docs`
+  : 'http://localhost:8000/api/docs';
 
 export default function Home() {
   return (
@@ -30,7 +36,9 @@ export default function Home() {
             Open Dashboard
           </Link>
           <a
-            href="/api/docs"
+            href={API_DOCS_URL}
+            target="_blank"
+            rel="noopener noreferrer"
             className="bg-white/10 hover:bg-white/20 text-white border border-white/20 px-8 py-3 rounded-xl font-semibold text-lg transition-all backdrop-blur"
           >
             API Docs
