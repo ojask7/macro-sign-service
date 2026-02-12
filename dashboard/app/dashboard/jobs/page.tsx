@@ -1,4 +1,8 @@
+'use client';
+
+import { useState } from 'react';
 import JobsTable from '@/components/JobsTable';
+import UploadMacroModal from '@/components/UploadMacroModal';
 
 const jobs = [
   {
@@ -44,6 +48,13 @@ const jobs = [
 ];
 
 export default function JobsPage() {
+  const [isUploadOpen, setIsUploadOpen] = useState(false);
+
+  const handleUploadSuccess = (job: any) => {
+    // In a full implementation, this would refresh the jobs list
+    console.log('Signing job created:', job);
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
@@ -59,7 +70,12 @@ export default function JobsPage() {
             <option>Queued</option>
             <option>Failed</option>
           </select>
-          <button className="btn-primary text-sm">Upload Macro</button>
+          <button
+            onClick={() => setIsUploadOpen(true)}
+            className="btn-primary text-sm"
+          >
+            Upload Macro
+          </button>
         </div>
       </div>
 
@@ -72,6 +88,12 @@ export default function JobsPage() {
           <button className="btn-secondary text-sm">Next</button>
         </div>
       </div>
+
+      <UploadMacroModal
+        isOpen={isUploadOpen}
+        onClose={() => setIsUploadOpen(false)}
+        onSuccess={handleUploadSuccess}
+      />
     </div>
   );
 }

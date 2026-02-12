@@ -72,6 +72,32 @@ class ApiClient {
   }
 
   // Signing Jobs
+  async signMacro(file: File, algorithm = 'sha256', profile?: string, webhookUrl?: string) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('algorithm', algorithm);
+    if (profile) formData.append('profile', profile);
+    if (webhookUrl) formData.append('webhook_url', webhookUrl);
+
+    const requestHeaders: Record<string, string> = {};
+    if (this.token) {
+      requestHeaders['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(`${this.baseUrl}/api/v1/sign`, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json();
+  }
+
   async getSigningJobs(page = 1, perPage = 20, status?: string) {
     const params = new URLSearchParams({ page: String(page), per_page: String(perPage) });
     if (status) params.set('status_filter', status);
