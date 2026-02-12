@@ -2,7 +2,11 @@
  * API client for the Macro Sign Service backend.
  */
 
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000';
+// Use NEXT_PUBLIC_API_URL for client-side (browser) calls, API_BASE_URL for server-side (SSR)
+const API_BASE_URL =
+  typeof window !== 'undefined'
+    ? (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000')
+    : (process.env.API_BASE_URL || 'http://localhost:8000');
 
 interface ApiOptions {
   method?: string;

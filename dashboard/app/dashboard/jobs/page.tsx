@@ -1,59 +1,81 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import JobsTable from '@/components/JobsTable';
 import UploadMacroModal from '@/components/UploadMacroModal';
+import { api } from '@/lib/api';
 
-const jobs = [
-  {
-    job_id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
-    status: 'completed',
-    original_filename: 'financial_report.vba',
-    file_size: 15234,
-    algorithm: 'sha256',
-    created_at: '2026-02-08T10:30:00Z',
-  },
-  {
-    job_id: 'b2c3d4e5-f6a7-8901-bcde-f12345678901',
-    status: 'completed',
-    original_filename: 'data_import.bas',
-    file_size: 8456,
-    algorithm: 'sha256',
-    created_at: '2026-02-08T09:15:00Z',
-  },
-  {
-    job_id: 'c3d4e5f6-a7b8-9012-cdef-123456789012',
-    status: 'processing',
-    original_filename: 'automation_tools.cls',
-    file_size: 22100,
-    algorithm: 'sha384',
-    created_at: '2026-02-08T11:00:00Z',
-  },
-  {
-    job_id: 'd4e5f6a7-b8c9-0123-defa-234567890123',
-    status: 'queued',
-    original_filename: 'custom_forms.frm',
-    file_size: 5678,
-    algorithm: 'sha256',
-    created_at: '2026-02-08T11:05:00Z',
-  },
-  {
-    job_id: 'e5f6a7b8-c9d0-1234-efab-345678901234',
-    status: 'failed',
-    original_filename: 'legacy_module.vba',
-    file_size: 45230,
-    algorithm: 'sha512',
-    created_at: '2026-02-07T16:45:00Z',
-  },
+interface Job {
+  job_id: string;
+  status: string;
+  original_filename: string;
+  file_size: number;
+  algorithm: string;
+  created_at: string;
+  completed_at?: string;
+}
+
+interface JobsResponse {
+  jobs: Job[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+const STATUS_OPTIONS = [
+  { label: 'All Status', value: '' },
+  { label: 'Completed', value: 'completed' },
+  { label: 'Processing', value: 'processing' },
+  { label: 'Queued', value: 'queued' },
+  { label: 'Failed', value: 'failed' },
 ];
+
+const PER_PAGE = 20;
 
 export default function JobsPage() {
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleUploadSuccess = (job: any) => {
-    // In a full implementation, this would refresh the jobs list
-    console.log('Signing job created:', job);
+  const fetchJobs = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = (await api.getSigningJobs(page, PER_PAGE, statusFilter || undefined)) as JobsResponse;
+      setJobs(data.jobs);
+      setTotal(data.total);
+    } catch (err: any) {
+      setError(err.message || 'Failed to load signing jobs');
+      setJobs([]);
+      setTotal(0);
+    } finally {
+      setLoading(false);
+    }
+  }, [page, statusFilter]);
+
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
+
+  const handleUploadSuccess = () => {
+    setIsUploadOpen(false);
+    // Reset to page 1 and refresh to show the new job at the top
+    setPage(1);
+    fetchJobs();
   };
+
+  const handleStatusChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    setStatusFilter(e.target.value);
+    setPage(1); // Reset to first page on filter change
+  };
+
+  const totalPages = Math.ceil(total / PER_PAGE);
+  const showingFrom = total === 0 ? 0 : (page - 1) * PER_PAGE + 1;
+  const showingTo = Math.min(page * PER_PAGE, total);
 
   return (
     <div className="space-y-8">
@@ -63,12 +85,16 @@ export default function JobsPage() {
           <p className="text-gray-500 mt-1">View and manage macro signing operations</p>
         </div>
         <div className="flex gap-3">
-          <select className="btn-secondary text-sm">
-            <option>All Status</option>
-            <option>Completed</option>
-            <option>Processing</option>
-            <option>Queued</option>
-            <option>Failed</option>
+          <select
+            value={statusFilter}
+            onChange={handleStatusChange}
+            className="btn-secondary text-sm"
+          >
+            {STATUS_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
           </select>
           <button
             onClick={() => setIsUploadOpen(true)}
@@ -79,13 +105,56 @@ export default function JobsPage() {
         </div>
       </div>
 
-      <JobsTable jobs={jobs} title="All Signing Jobs" />
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-700 flex items-center justify-between">
+          <span>{error}</span>
+          <button onClick={fetchJobs} className="text-red-800 underline text-sm ml-4">
+            Retry
+          </button>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="card">
+          <div className="px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg font-semibold text-gray-900">All Signing Jobs</h3>
+          </div>
+          <div className="flex items-center justify-center py-16">
+            <div className="flex items-center gap-3 text-gray-500">
+              <svg className="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              Loading jobs...
+            </div>
+          </div>
+        </div>
+      ) : (
+        <JobsTable jobs={jobs} title="All Signing Jobs" />
+      )}
 
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-500">Showing 1-5 of 1,247 jobs</p>
+        <p className="text-sm text-gray-500">
+          {total === 0
+            ? 'No jobs found'
+            : `Showing ${showingFrom}-${showingTo} of ${total.toLocaleString()} jobs`
+          }
+        </p>
         <div className="flex gap-2">
-          <button className="btn-secondary text-sm" disabled>Previous</button>
-          <button className="btn-secondary text-sm">Next</button>
+          <button
+            className="btn-secondary text-sm"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+          >
+            Previous
+          </button>
+          <button
+            className="btn-secondary text-sm"
+            disabled={page >= totalPages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            Next
+          </button>
         </div>
       </div>
 
