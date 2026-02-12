@@ -143,7 +143,7 @@ async def delete_webhook(
     webhook_id: str,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> None:
+):
     """Delete a webhook configuration."""
     result = await db.execute(
         select(WebhookConfig).where(
