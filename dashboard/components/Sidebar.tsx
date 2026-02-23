@@ -1,9 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import clsx from 'clsx';
+import { clearToken } from '@/lib/auth';
+import { api } from '@/lib/api';
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboardIcon },
@@ -82,7 +84,18 @@ function SettingsIcon({ className }: { className?: string }) {
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
+  const [username, setUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.getMe().then((u: any) => setUsername(u.username)).catch(() => {});
+  }, []);
+
+  const handleLogout = () => {
+    clearToken();
+    router.replace('/login');
+  };
 
   return (
     <div
@@ -141,12 +154,30 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* Footer */}
-      <div className="p-4 border-t border-gray-800">
-        {!collapsed && (
-          <div className="text-xs text-gray-500">
-            Macro Sign Service v1.0.0
+      {/* Footer: user + logout */}
+      <div className="p-3 border-t border-gray-800 space-y-2">
+        {!collapsed && username && (
+          <div className="px-1 text-xs text-gray-400 truncate">
+            Signed in as <span className="text-white font-medium">{username}</span>
           </div>
+        )}
+        <button
+          onClick={handleLogout}
+          className={clsx(
+            'flex items-center gap-2 w-full px-3 py-2 rounded-lg text-sm text-gray-400 hover:text-white hover:bg-gray-800 transition-colors',
+            collapsed && 'justify-center'
+          )}
+          title="Log out"
+        >
+          <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+            <polyline points="16 17 21 12 16 7" />
+            <line x1="21" y1="12" x2="9" y2="12" />
+          </svg>
+          {!collapsed && <span>Log out</span>}
+        </button>
+        {!collapsed && (
+          <div className="px-1 text-xs text-gray-600">v1.0.0</div>
         )}
       </div>
     </div>

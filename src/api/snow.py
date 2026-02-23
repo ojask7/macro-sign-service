@@ -261,3 +261,54 @@ async def snow_list_certs(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Failed to list certificates: {e}",
         )
+
+
+@router.get(
+    "/certs/{name}",
+    summary="Get Certificate Details",
+    description="Get X.509 details for a named certificate in the key store.",
+)
+async def snow_get_cert_details(
+    name: str,
+    current_user=Depends(RBACPermission("sign")),
+) -> dict:
+    """Return X.509 metadata for a specific certificate (no private key exposed)."""
+    from cryptography.hazmat.primitives.asymmetric import ec as _ec
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
+    from src.core.certificate_store import CertificateStoreError, get_certificate_store
+
+    cert_store = get_certificate_store()
+    try:
+        cert_info = await cert_store.get_certificate(name)
+    except CertificateStoreError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Certificate '{name}' not found: {e}",
+        )
+
+    from cryptography.hazmat.primitives import hashes as _hashes
+
+    cert = _x509.load_pem_x509_certificate(cert_info.certificate_pem)
+    fp = cert.fingerprint(_hashes.SHA256())
+    fp_str = ":".join(f"{b:02X}" for b in fp)
+
+    pub_key = cert.public_key()
+    if isinstance(pub_key, _rsa.RSAPublicKey):
+        key_info = f"RSA-{pub_key.key_size}"
+    elif isinstance(pub_key, _ec.EllipticCurvePublicKey):
+        key_info = f"EC-{pub_key.curve.name}"
+    else:
+        key_info = "Unknown"
+
+    return {
+        "name": name,
+        "subject": cert.subject.rfc4514_string(),
+        "issuer": cert.issuer.rfc4514_string(),
+        "serial": str(cert.serial_number),
+        "not_valid_before": cert.not_valid_before_utc.isoformat(),
+        "not_valid_after": cert.not_valid_after_utc.isoformat(),
+        "fingerprint_sha256": fp_str,
+        "key_type": key_info,
+        "certificate_pem": cert_info.certificate_pem.decode(),
+    }

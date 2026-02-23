@@ -28,6 +28,12 @@ class ApiClient {
   }
 
   private async request<T>(endpoint: string, options: ApiOptions = {}): Promise<T> {
+    // Auto-load token from localStorage for client-side calls
+    if (typeof window !== 'undefined' && !this.token) {
+      const stored = localStorage.getItem('mss_token');
+      if (stored) this.token = stored;
+    }
+
     const { method = 'GET', body, headers = {} } = options;
 
     const requestHeaders: Record<string, string> = {
@@ -136,6 +142,25 @@ class ApiClient {
   // Webhooks
   async getWebhooks() {
     return this.request('/api/v1/webhooks');
+  }
+
+  // Certificate details (SNOW)
+  async listCerts() {
+    return this.request<{ certificates: string[]; count: number }>('/api/v1/snow/certs');
+  }
+
+  async getCertDetails(name: string) {
+    return this.request<{
+      name: string;
+      subject: string;
+      issuer: string;
+      serial: string;
+      not_valid_before: string;
+      not_valid_after: string;
+      fingerprint_sha256: string;
+      key_type: string;
+      certificate_pem: string;
+    }>(`/api/v1/snow/certs/${encodeURIComponent(name)}`);
   }
 }
 

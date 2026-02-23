@@ -1,77 +1,118 @@
+'use client';
+
+import { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
+
+interface CertDetail {
+  name: string;
+  subject: string;
+  issuer: string;
+  not_valid_before: string;
+  not_valid_after: string;
+  fingerprint_sha256: string;
+  key_type: string;
+}
+
+function daysUntil(iso: string) {
+  const diff = new Date(iso).getTime() - Date.now();
+  return Math.floor(diff / 86_400_000);
+}
+
 export default function CertificatesPage() {
-  const certificates = [
-    {
-      name: 'production-signing',
-      subject: 'CN=Macro Sign Prod, O=Company Inc, C=US',
-      issuer: 'CN=Company CA, O=Company Inc, C=US',
-      expires: '2027-01-15T00:00:00Z',
-      fingerprint: 'a1b2c3d4e5f6...',
-      status: 'active',
-    },
-    {
-      name: 'staging-signing',
-      subject: 'CN=Macro Sign Staging, O=Company Inc, C=US',
-      issuer: 'CN=Company CA, O=Company Inc, C=US',
-      expires: '2026-12-01T00:00:00Z',
-      fingerprint: 'f6e5d4c3b2a1...',
-      status: 'active',
-    },
-    {
-      name: 'dev-self-signed',
-      subject: 'CN=Macro Sign Service Dev, O=Development, C=US',
-      issuer: 'CN=Macro Sign Service Dev, O=Development, C=US',
-      expires: '2027-02-08T00:00:00Z',
-      fingerprint: '112233445566...',
-      status: 'active',
-    },
-  ];
+  const [certs, setCerts] = useState<CertDetail[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const list = await api.listCerts();
+        const details = await Promise.all(
+          list.certificates.map((name) => api.getCertDetails(name).catch(() => null))
+        );
+        setCerts(details.filter(Boolean) as CertDetail[]);
+      } catch (err: any) {
+        setError(err.message || 'Failed to load certificates');
+      } finally {
+        setLoading(false);
+      }
+    };
+    load();
+  }, []);
 
   return (
     <div className="space-y-8">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Certificates</h1>
-          <p className="text-gray-500 mt-1">Manage signing certificates and profiles</p>
+          <p className="text-gray-500 mt-1">Active signing certificates — live from key store</p>
         </div>
-        <button className="btn-primary text-sm">Add Certificate</button>
       </div>
 
-      <div className="grid gap-6">
-        {certificates.map((cert) => (
-          <div key={cert.name} className="card p-6">
-            <div className="flex items-start justify-between">
-              <div className="space-y-2">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-lg font-semibold text-gray-900">{cert.name}</h3>
-                  <span className="badge-success">Active</span>
-                </div>
-                <div className="space-y-1 text-sm text-gray-500">
-                  <p><span className="font-medium text-gray-700">Subject:</span> {cert.subject}</p>
-                  <p><span className="font-medium text-gray-700">Issuer:</span> {cert.issuer}</p>
-                  <p>
-                    <span className="font-medium text-gray-700">Expires:</span>{' '}
-                    {new Date(cert.expires).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    })}
-                  </p>
-                  <p>
-                    <span className="font-medium text-gray-700">Fingerprint:</span>{' '}
-                    <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded">{cert.fingerprint}</code>
-                  </p>
+      {loading && (
+        <div className="flex items-center gap-3 text-gray-500 py-8">
+          <svg className="animate-spin w-5 h-5" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          Loading certificates…
+        </div>
+      )}
+
+      {!loading && error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">{error}</div>
+      )}
+
+      {!loading && !error && certs.length === 0 && (
+        <div className="card p-8 text-center text-sm text-gray-400">
+          No certificates in key store yet. Run <code className="bg-gray-100 px-1 rounded">python tests/run_live_tests.py</code> to provision dev &amp; prod certificates.
+        </div>
+      )}
+
+      {!loading && !error && (
+        <div className="grid gap-6">
+          {certs.map((cert) => {
+            const days = daysUntil(cert.not_valid_after);
+            const expiring = days < 30;
+            const expired = days < 0;
+            return (
+              <div key={cert.name} className="card p-6">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex items-center gap-3 flex-wrap">
+                      <h3 className="text-lg font-semibold text-gray-900">{cert.name}</h3>
+                      {expired
+                        ? <span className="badge-error">Expired</span>
+                        : expiring
+                          ? <span className="badge-warning">Expiring soon</span>
+                          : <span className="badge-success">Active</span>}
+                      <span className="text-xs font-mono bg-gray-100 text-gray-600 px-2 py-0.5 rounded">{cert.key_type}</span>
+                    </div>
+                    <div className="space-y-1 text-sm text-gray-500">
+                      <p><span className="font-medium text-gray-700">Subject:</span> {cert.subject}</p>
+                      <p><span className="font-medium text-gray-700">Issuer:</span> {cert.issuer}</p>
+                      <p>
+                        <span className="font-medium text-gray-700">Valid:</span>{' '}
+                        {new Date(cert.not_valid_before).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                        {' → '}
+                        {new Date(cert.not_valid_after).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}
+                        {' '}
+                        <span className={expired ? 'text-red-600' : expiring ? 'text-amber-600' : 'text-green-600'}>
+                          ({expired ? `expired ${Math.abs(days)}d ago` : `${days}d remaining`})
+                        </span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">SHA-256:</span>{' '}
+                        <code className="text-xs bg-gray-100 px-1.5 py-0.5 rounded break-all">{cert.fingerprint_sha256}</code>
+                      </p>
+                    </div>
+                  </div>
                 </div>
               </div>
-              <div className="flex gap-2">
-                <button className="btn-secondary text-sm">Rotate</button>
-                <button className="text-sm text-red-600 hover:text-red-700 font-medium px-3 py-2">
-                  Revoke
-                </button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

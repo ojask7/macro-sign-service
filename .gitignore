@@ -12,6 +12,8 @@ eggs/
 .eggs/
 lib/
 lib64/
+# Allow dashboard/lib (TypeScript source, not a Python venv lib)
+!dashboard/lib/
 parts/
 sdist/
 var/
