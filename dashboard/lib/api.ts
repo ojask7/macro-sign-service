@@ -149,6 +149,53 @@ class ApiClient {
     return this.request<{ certificates: string[]; count: number }>('/api/v1/snow/certs');
   }
 
+  async snowSignMacro(
+    file: File,
+    algorithm = 'sha256',
+    domain = 'snow-test-domain',
+    requesterId?: string,
+    table?: string,
+  ) {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('algorithm', algorithm);
+    formData.append('domain', domain);
+    if (requesterId) formData.append('requester_id', requesterId);
+    if (table) formData.append('table', table);
+
+    const requestHeaders: Record<string, string> = {};
+    if (this.token) {
+      requestHeaders['Authorization'] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(`${this.baseUrl}/api/v1/snow/sign`, {
+      method: 'POST',
+      headers: requestHeaders,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Signing failed' }));
+      throw new Error(error.detail || `HTTP ${response.status}`);
+    }
+
+    return response.json() as Promise<{
+      status: string;
+      original_filename: string;
+      file_size: number;
+      signed_content_b64: string;
+      signature: string;
+      file_hash: string;
+      certificate_fingerprint: string;
+      certificate_subject: string;
+      certificate_pem: string;
+      algorithm: string;
+      signed_at: string;
+      requester_id: string | null;
+      domain: string;
+    }>;
+  }
+
   async getCertDetails(name: string) {
     return this.request<{
       name: string;

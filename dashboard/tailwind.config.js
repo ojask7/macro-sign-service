@@ -20,6 +20,13 @@ module.exports = {
           900: '#1e3a8a',
           950: '#172554',
         },
+        snow: {
+          navy: '#1b2a4a',
+          header: '#1f3050',
+          bg: '#f1f1f1',
+          green: '#2e8540',
+          muted: '#8a99b4',
+        },
       },
     },
   },
