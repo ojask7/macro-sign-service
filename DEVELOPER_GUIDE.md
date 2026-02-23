@@ -1,6 +1,6 @@
-# Macro Sign Service - Developer Guide
+# Macro Sign Service — Developer Guide
 
-> Comprehensive API reference and integration guide for developers consuming the Macro Sign Service.
+> Comprehensive API reference and integration guide for developers consuming Macro Sign Service from ServiceNow (SNOW) forms and CI/CD pipelines.
 
 **Version:** 1.0.0
 **Base URL:** `http://localhost:8000/api/v1`
@@ -12,21 +12,34 @@
 
 - [Overview](#overview)
 - [Architecture](#architecture)
+  - [System Architecture](#system-architecture)
+  - [SNOW Synchronous Flow](#snow-synchronous-flow)
+  - [CI/CD Check-in Flow](#cicd-check-in-flow)
+  - [Certificate Key Store](#certificate-key-store)
 - [Getting Started](#getting-started)
 - [Authentication](#authentication)
 - [API Reference](#api-reference)
+  - [ServiceNow Integration (SNOW)](#servicenow-integration-snow)
+  - [Standard Signing (Async)](#standard-signing-async)
+  - [Verification](#verification)
   - [Health](#health)
   - [Auth](#auth)
-  - [Signing](#signing)
-  - [Verification](#verification)
   - [Webhooks](#webhooks)
   - [Admin](#admin)
-- [Request & Response Formats](#request--response-formats)
+- [Integration Guide: ServiceNow](#integration-guide-servicenow)
+  - [SNOW Business Rule](#snow-business-rule)
+  - [SNOW Script Include](#snow-script-include)
+  - [SNOW Flow Designer Action](#snow-flow-designer-action)
+  - [Storing Signature in a SNOW Record](#storing-signature-in-a-snow-record)
+- [Integration Guide: CI/CD Pipelines](#integration-guide-cicd-pipelines)
+  - [GitHub Actions — check-in trigger](#github-actions--check-in-trigger)
+  - [Azure DevOps Pipeline](#azure-devops-pipeline)
+  - [Jenkins Pipeline](#jenkins-pipeline)
+  - [Generic shell script](#generic-shell-script)
 - [Error Handling](#error-handling)
 - [Rate Limiting](#rate-limiting)
 - [Webhook Events](#webhook-events)
 - [File Requirements](#file-requirements)
-- [SDKs & Integration Examples](#sdks--integration-examples)
 - [Environment Configuration](#environment-configuration)
 - [Running Tests](#running-tests)
 - [Monitoring](#monitoring)
@@ -35,49 +48,168 @@
 
 ## Overview
 
-Macro Sign Service is an enterprise-grade digital signing service that automates the signing and verification of Office macros (VBA). It provides:
+Macro Sign Service provides **digital signing of Office VBA macros** using X.509 certificates. It is consumed by two categories of client:
 
-- **Digital signing** of `.vba`, `.bas`, `.cls`, `.frm`, `.vbs` files using X.509 certificates
-- **Signature verification** to validate signed macros
-- **Asynchronous processing** via Celery workers for high-throughput signing
-- **JWT & API key authentication** with role-based access control (RBAC)
-- **Webhook notifications** for job completion events
-- **Full audit trail** of all signing operations
-- **Certificate management** with support for local, HashiCorp Vault, AWS KMS, and Azure Key Vault backends
+| Consumer | Mode | Endpoint | Use case |
+|----------|------|----------|----------|
+| **ServiceNow GUI** | Synchronous | `POST /snow/sign` | A SNOW form, Business Rule, or Script Include submits a macro file and receives the signed content in a single HTTP response — no polling, no async. The SNOW record stores the returned `signature` and `signed_content_b64` fields. |
+| **CI/CD pipeline** | Asynchronous | `POST /sign` → `GET /status/{job_id}` | A pipeline triggered on code check-in submits a macro for background signing, polls for the result, and attaches the signature to the build artifact. |
+
+Both paths use the same signing engine, the same certificate key store, and the same audit trail.
 
 ---
 
 ## Architecture
 
+### System Architecture
+
 ```
-                                +-----------------+
-                                |   Dashboard     |
-                                |  (Next.js:3000) |
-                                +--------+--------+
-                                         |
-                                         v
-+-------------+    REST API     +--------+--------+     Celery      +----------------+
-|   Client    | +-------------> |   FastAPI API   | +-------------> | Celery Worker  |
-| (curl/SDK)  |                 |   (uvicorn:8000)|                 | (signing tasks)|
-+-------------+                 +--------+--------+                 +-------+--------+
-                                         |                                  |
-                          +--------------+--------------+                   |
-                          |                             |                   |
-                  +-------v-------+            +--------v------+    +-------v-------+
-                  |  PostgreSQL   |            |    Redis      |    |  Cert Store   |
-                  |  (port 5432)  |            |  (port 6379)  |    | (local/vault) |
-                  +---------------+            +---------------+    +---------------+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  CONSUMERS                                                               │
+│                                                                          │
+│  ┌──────────────────────┐     POST /api/v1/snow/sign                    │
+│  │  ServiceNow (SNOW)   │ ──────────────────────────────────────┐       │
+│  │  • Form UI           │  ◄── 200 OK                           │       │
+│  │  • Business Rule     │       signed_content_b64              │       │
+│  │  • Script Include    │       signature                       │       │
+│  │  • Flow Designer     │       certificate_pem                 │       │
+│  └──────────────────────┘                                       │       │
+│                                                                  ▼       │
+│  ┌──────────────────────┐     POST /api/v1/sign          ┌─────────────┐│
+│  │  CI/CD Pipeline      │ ──────────────────────────────▶│  FastAPI    ││
+│  │  • GitHub Actions    │  ◄── 202 Accepted (job_id)     │  API Server ││
+│  │  • Azure DevOps      │                                │  :8000      ││
+│  │  • Jenkins           │     GET /api/v1/status/{id}    └──────┬──────┘│
+│  │  on: push / PR       │ ──────────────────────────────▶       │       │
+│  └──────────────────────┘  ◄── 200 OK (signature)        ┌──────▼──────┐│
+│                                                           │  Celery     ││
+│  ┌──────────────────────┐                                │  Worker     ││
+│  │  CLI / SDK           │ ──────────────────────────────▶│  (async)    ││
+│  └──────────────────────┘                                └──────┬──────┘│
+└─────────────────────────────────────────────────────────────────┼───────┘
+                                                                  │
+                   ┌──────────────────────────────────────────────┤
+                   │                          │                   │
+          ┌────────▼────────┐   ┌─────────────▼──────┐  ┌────────▼───────┐
+          │  Certificate    │   │  PostgreSQL         │  │  Redis         │
+          │  Key Store      │   │  • signing_jobs     │  │  Celery broker │
+          │  • Local FS     │   │  • users / teams    │  │  result store  │
+          │  • Vault        │   │  • audit_logs       │  └────────────────┘
+          │  • AWS KMS      │   │  • api_keys         │
+          │  • Azure KV     │   └────────────────────┘
+          └─────────────────┘
 ```
 
-| Service | Port | Purpose |
-|---------|------|---------|
-| API Server | `8000` | REST API (FastAPI + Uvicorn) |
-| Dashboard | `3000` | Web management UI (Next.js) |
-| PostgreSQL | `5432` | Persistent data storage |
-| Redis | `6379` | Celery broker, caching, rate limiting |
-| Celery Worker | -- | Async signing job processing |
-| Prometheus | `9090` | Metrics collection |
-| Grafana | `3001` | Monitoring dashboards |
+---
+
+### SNOW Synchronous Flow
+
+The `/snow/sign` endpoint is purpose-built for ServiceNow. It accepts a file and returns the signed content in a **single synchronous HTTP 200 response** — no job IDs, no polling.
+
+```
+SNOW client
+    │
+    │  POST /api/v1/snow/sign
+    │  Content-Type: multipart/form-data
+    │  X-API-Key: mss_...
+    │  file=<vba_bytes>
+    │  requester_id=sys_u_abc123          ← SNOW user sys_id (audit)
+    │  table=sys_script_include           ← SNOW table name (audit)
+    │  domain=snow-test-domain            ← certificate to use
+    │
+    ▼
+[ FileValidator ]
+    Rejects: wrong extension, empty, >50 MB, path traversal
+    ↓
+[ CertificateStore.get_or_create_certificate("snow-test-domain") ]
+    Returns existing cert or auto-provisions a self-signed test cert
+    ↓
+[ SigningEngine.sign(file_bytes, algorithm="sha256") ]
+    RSA PKCS1v15 signature over file content
+    ↓
+[ AuditLog written to PostgreSQL ]
+    action="snow.signing.completed", requester_id, table, IP
+    ↓
+    │
+    │  HTTP 200 OK
+    │  {
+    │    "status": "signed",
+    │    "signed_content_b64": "<base64 of original file>",
+    │    "signature":           "<hex RSA signature>",
+    │    "certificate_pem":     "<PEM public cert>",
+    │    "certificate_subject": "CN=snow-test.macro-sign.local,...",
+    │    "file_hash":           "<sha256 hex>",
+    │    "signed_at":           "2026-02-23T10:00:00Z",
+    │    "requester_id":        "sys_u_abc123"
+    │  }
+    ▼
+SNOW form stores:
+    u_macro_signature   ← response.signature
+    u_signed_content    ← response.signed_content_b64
+    u_cert_fingerprint  ← response.certificate_fingerprint
+```
+
+---
+
+### CI/CD Check-in Flow
+
+The `/sign` endpoint is designed for pipelines. It is **asynchronous** — the caller receives a `job_id` immediately and polls for the result.
+
+```
+Developer pushes code (git push / PR)
+    │
+    ▼
+Pipeline trigger: on: push to main / on: pull_request
+    │
+    ▼
+Step: Sign VBA macros
+    │
+    │  POST /api/v1/sign
+    │  X-API-Key: mss_ci_pipeline_key
+    │  file=report.vba
+    │  algorithm=sha256
+    │  webhook_url=https://ci.example.com/hooks/macro-sign   ← optional
+    │
+    ▼  202 Accepted  { "job_id": "abc-123", "status": "queued" }
+    │
+    ▼
+Poll GET /api/v1/status/abc-123  every 2 seconds
+    │
+    ▼  until status == "completed"
+    │  {
+    │    "status": "completed",
+    │    "signature": "3045022100...",
+    │    "file_hash": "a1b2c3...",
+    │    "certificate_fingerprint": "AB:CD:EF:..."
+    │  }
+    │
+    ▼
+Attach signature to build artifact / store in artifact repository
+    │
+    ▼
+Pipeline passes — signed macro deployed
+```
+
+**Webhook alternative (event-driven):** Instead of polling, configure a `webhook_url`. The service posts to that URL when signing completes, eliminating the polling loop.
+
+---
+
+### Certificate Key Store
+
+The key store is configurable via `CERT_STORE_BACKEND`. All backends implement the same interface including an idempotent `get_or_create_certificate()` method used by the SNOW endpoint to auto-provision the test-domain certificate on first use.
+
+| Backend | Env value | Use case |
+|---------|-----------|----------|
+| Local filesystem | `local` | Development and testing — certificates stored in `./certs/` |
+| HashiCorp Vault | `hashicorp_vault` | On-prem or private cloud — KV secrets engine v2 |
+| AWS KMS / Secrets Manager | `aws_kms` | AWS-hosted workloads |
+| Azure Key Vault | `azure_keyvault` | Azure-hosted workloads — DefaultAzureCredential or service principal |
+
+On startup in non-production environments, the service auto-generates:
+- `certs/default.pem` — general-purpose dev cert
+- `certs/snow-test-domain.pem` — pre-provisioned SNOW test-domain cert
+
+In production, provision certificates via the `/admin/profiles` API or directly in the key store backend.
 
 ---
 
@@ -86,634 +218,735 @@ Macro Sign Service is an enterprise-grade digital signing service that automates
 ### Prerequisites
 
 - Docker & Docker Compose
-- (Optional) Python 3.11+ for local development
+- Python 3.11+
+- A code-signing certificate (auto-generated in dev)
 
 ### Quick Start
 
 ```bash
-# Clone the repository
 git clone https://github.com/ojask7/macro-sign-service.git
 cd macro-sign-service
-
-# Copy and configure environment
 cp .env.example .env
-
-# Start all services
 docker-compose up -d
-
-# Verify services are running
-docker-compose ps
+curl http://localhost:8000/api/v1/health
 ```
 
-### First API Call
+### First Requests
 
 ```bash
-# 1. Health check
-curl http://localhost:8000/api/v1/health
-
-# 2. Register a user
+# Register a user
 curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
-  -d '{
-    "email": "dev@example.com",
-    "username": "developer",
-    "password": "SecurePass123!",
-    "full_name": "Developer"
-  }'
+  -d '{"email":"dev@example.com","username":"developer","password":"SecurePass123!","full_name":"Developer"}'
 
-# 3. Login to get a token
-curl -X POST http://localhost:8000/api/v1/auth/login \
+# Login
+TOKEN=$(curl -sf -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "developer", "password": "SecurePass123!"}'
+  -d '{"username":"developer","password":"SecurePass123!"}' \
+  | jq -r '.access_token')
 
-# 4. Sign a macro file
+# SNOW-style synchronous sign
+curl -X POST http://localhost:8000/api/v1/snow/sign \
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@my_macro.vba" \
+  -F "requester_id=sys_u_test"
+
+# Standard async sign
 curl -X POST http://localhost:8000/api/v1/sign \
-  -H "Authorization: Bearer <your_access_token>" \
-  -F "file=@your_macro.vba" \
-  -F "algorithm=sha256"
+  -H "Authorization: Bearer $TOKEN" \
+  -F "file=@my_macro.vba"
 ```
 
 ---
 
 ## Authentication
 
-All API endpoints (except health checks, register, and login) require authentication.
-
 ### JWT Bearer Tokens
 
-The primary authentication method. Obtain tokens via the `/auth/login` endpoint.
+Obtain via `/auth/login`. Include in requests:
 
 ```
 Authorization: Bearer <access_token>
 ```
 
-| Token Type | Lifetime | Purpose |
-|-----------|----------|---------|
-| Access Token | 30 minutes (default) | API request authentication |
-| Refresh Token | 7 days (default) | Obtaining new access tokens |
+| Token | Lifetime | Purpose |
+|-------|----------|---------|
+| Access token | 30 min | API request auth |
+| Refresh token | 7 days | Obtain new access tokens |
 
 ### API Keys
 
-For programmatic/CI-CD access. Create via the `/auth/api-keys` endpoint.
+Better suited for CI/CD and SNOW integrations since they don't expire on short timers.
 
 ```
 X-API-Key: mss_abc123...
 ```
 
-API keys:
-- Are prefixed with `mss_` for identification
-- Can have optional expiration (1-365 days)
-- Can be revoked at any time
-- Full key is only shown **once** at creation time
+Create via `POST /auth/api-keys`. The full key is shown **once at creation time only**.
 
-### User Roles & Permissions
+### RBAC Roles
 
-| Role | Permissions |
-|------|------------|
-| `admin` | Full access to all resources, user management, audit logs |
+| Role | Allowed operations |
+|------|--------------------|
+| `admin` | All operations, user management, audit logs |
 | `manager` | Team management, signing profiles, webhooks, analytics |
-| `developer` | Sign macros, verify signatures, manage own API keys |
-| `viewer` | Read-only access to job status |
+| `developer` | Sign macros (`/sign`, `/snow/sign`), verify, manage own API keys |
+| `viewer` | Verify signatures, view own job status |
 
 ---
 
 ## API Reference
 
-### Health
+### ServiceNow Integration (SNOW)
 
-#### `GET /api/v1/health` -- Health Check
+#### `POST /api/v1/snow/sign` — Synchronous Sign
 
-Returns service health status including database and Redis connectivity.
+Signs a macro and returns the result synchronously. Designed for SNOW forms, Business Rules, and Script Includes that cannot poll for async results.
 
-**Authentication:** None required
+**Auth:** Required (developer+) | **Content-Type:** multipart/form-data
 
-**Response:**
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `file` | Yes | — | Macro file (.vba .bas .cls .frm .vbs) |
+| `algorithm` | No | `sha256` | `sha256` \| `sha384` \| `sha512` |
+| `domain` | No | `snow-test-domain` | Certificate name in key store |
+| `requester_id` | No | `null` | SNOW user sys_id (written to audit log) |
+| `table` | No | `null` | SNOW table name (written to audit log) |
+
+**Response: 200 OK**
 
 ```json
 {
-  "status": "healthy",
-  "version": "1.0.0",
-  "environment": "development",
-  "timestamp": "2026-02-12T10:00:00Z",
-  "checks": {
-    "database": "healthy",
-    "redis": "healthy"
-  }
+  "status": "signed",
+  "original_filename": "report_macro.vba",
+  "file_size": 2048,
+  "signed_content_b64": "QXR0cmlidXRlIFZCX05hbWUg...",
+  "signature": "3045022100abcdef1234...",
+  "file_hash": "a1b2c3d4e5f6...",
+  "certificate_fingerprint": "AB:CD:EF:01:23:45:...",
+  "certificate_subject": "CN=snow-test.macro-sign.local,O=SNOW Test Domain,C=US",
+  "certificate_pem": "-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----\n",
+  "algorithm": "sha256",
+  "signed_at": "2026-02-23T10:00:00Z",
+  "requester_id": "sys_u_abc123",
+  "domain": "snow-test-domain"
 }
 ```
 
-| Status | Meaning |
-|--------|---------|
-| `healthy` | All dependencies operational |
-| `degraded` | One or more dependencies unhealthy |
+#### `POST /api/v1/snow/verify` — Verify SNOW Signature
 
-#### `GET /api/v1/ready` -- Readiness Probe
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `file` | Yes | — | Original macro file |
+| `signature` | Yes | — | Hex-encoded signature from sign response |
+| `algorithm` | No | `sha256` | Must match algorithm used during signing |
+| `domain` | No | `snow-test-domain` | Certificate domain used when signing |
 
-Kubernetes readiness check. Returns `{"ready": true}`.
+**Response: 200 OK**
 
-#### `GET /api/v1/live` -- Liveness Probe
+```json
+{
+  "is_valid": true,
+  "certificate_subject": "CN=snow-test.macro-sign.local,...",
+  "certificate_issuer": "CN=snow-test.macro-sign.local,...",
+  "certificate_expiry": "2027-02-23T10:00:00Z",
+  "message": "Signature is valid",
+  "domain": "snow-test-domain"
+}
+```
 
-Kubernetes liveness check. Returns `{"alive": true}`.
+#### `GET /api/v1/snow/certs` — List Key Store Certificates
+
+**Response: 200 OK**
+
+```json
+{
+  "certificates": ["default", "snow-test-domain", "production-2026"],
+  "count": 3
+}
+```
 
 ---
 
-### Auth
+### Standard Signing (Async)
 
-#### `POST /api/v1/auth/register` -- Register User
+#### `POST /api/v1/sign` — Submit Async Signing Job
 
-**Authentication:** None required
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `file` | Yes | — | Macro file |
+| `algorithm` | No | `sha256` | Hash algorithm |
+| `profile` | No | `null` | Signing profile name |
+| `webhook_url` | No | `null` | Callback URL on completion |
 
-**Request Body:**
-
-```json
-{
-  "email": "user@example.com",
-  "username": "myuser",
-  "password": "SecurePass123!",
-  "full_name": "John Doe"
-}
-```
-
-| Field | Type | Required | Constraints |
-|-------|------|----------|-------------|
-| `email` | string | Yes | Valid email, max 255 chars |
-| `username` | string | Yes | 3-100 characters |
-| `password` | string | Yes | Min 8 characters |
-| `full_name` | string | No | Max 255 characters |
-
-**Response: `201 Created`**
-
-```json
-{
-  "id": "550e8400-e29b-41d4-a716-446655440000",
-  "email": "user@example.com",
-  "username": "myuser",
-  "full_name": "John Doe",
-  "role": "developer",
-  "is_active": true,
-  "team_id": null,
-  "created_at": "2026-02-12T10:00:00Z",
-  "last_login": null
-}
-```
-
-#### `POST /api/v1/auth/login` -- Login
-
-**Request Body:**
-
-```json
-{
-  "username": "myuser",
-  "password": "SecurePass123!"
-}
-```
-
-**Response: `200 OK`**
-
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-  "token_type": "bearer",
-  "expires_in": 1800
-}
-```
-
-#### `POST /api/v1/auth/refresh` -- Refresh Token
-
-**Query Parameter:** `refresh_token` (string, required)
-
-**Response: `200 OK`** -- Same format as login response with new tokens.
-
-#### `GET /api/v1/auth/me` -- Get Current User
-
-**Authentication:** Required
-
-**Response: `200 OK`** -- User profile object.
-
-#### `POST /api/v1/auth/api-keys` -- Create API Key
-
-**Authentication:** Required
-
-**Request Body:**
-
-```json
-{
-  "name": "CI Pipeline Key",
-  "expires_in_days": 90
-}
-```
-
-| Field | Type | Required | Constraints |
-|-------|------|----------|-------------|
-| `name` | string | Yes | 1-100 characters |
-| `expires_in_days` | integer | No | 1-365 days, null = no expiry |
-
-**Response: `201 Created`**
-
-```json
-{
-  "id": "key-uuid",
-  "name": "CI Pipeline Key",
-  "key_prefix": "mss_abc1",
-  "api_key": "mss_abc123def456...",
-  "is_active": true,
-  "created_at": "2026-02-12T10:00:00Z",
-  "expires_at": "2026-05-13T10:00:00Z"
-}
-```
-
-> **Important:** The `api_key` field is only returned at creation time. Store it securely.
-
-#### `GET /api/v1/auth/api-keys` -- List API Keys
-
-**Authentication:** Required
-
-**Response: `200 OK`** -- Array of API key objects (without the full key).
-
-#### `DELETE /api/v1/auth/api-keys/{key_id}` -- Revoke API Key
-
-**Authentication:** Required
-
-**Response: `204 No Content`**
-
----
-
-### Signing
-
-#### `POST /api/v1/sign` -- Sign a Macro File
-
-Submit a VBA macro file for digital signing. The file is processed asynchronously via a Celery worker and returns immediately with a job ID.
-
-**Authentication:** Required (role: `developer`+)
-**Content-Type:** `multipart/form-data`
-**Rate Limited:** Yes
-
-**Form Fields:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `file` | file | Yes | -- | The macro file to sign |
-| `algorithm` | string | No | `sha256` | Hash algorithm: `sha256`, `sha384`, `sha512` |
-| `profile` | string | No | `null` | Signing profile name |
-| `webhook_url` | string | No | `null` | URL to notify on completion |
-
-**Example:**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/sign \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@financial_report.vba" \
-  -F "algorithm=sha256" \
-  -F "webhook_url=https://myapp.com/hooks/signing"
-```
-
-**Response: `202 Accepted`**
+**Response: 202 Accepted**
 
 ```json
 {
   "job_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
   "status": "queued",
-  "original_filename": "financial_report.vba",
+  "original_filename": "report.vba",
   "file_size": 15234,
-  "file_hash": null,
-  "signature": null,
-  "certificate_fingerprint": null,
   "algorithm": "sha256",
-  "error_message": null,
-  "created_at": "2026-02-12T10:00:00Z",
-  "started_at": null,
-  "completed_at": null
+  "created_at": "2026-02-23T10:00:00Z"
 }
 ```
 
-**Job Lifecycle:**
+#### `GET /api/v1/status/{job_id}` — Poll Job Status
 
-```
-queued --> processing --> completed
-                    \--> failed
-```
-
-| Status | Description |
-|--------|-------------|
-| `queued` | Job created, waiting for worker |
-| `processing` | Worker is signing the file |
-| `completed` | Signing successful, signature available |
-| `failed` | Signing failed, check `error_message` |
-
-#### `GET /api/v1/sign/jobs` -- List Signing Jobs
-
-Returns paginated list of the current user's signing jobs.
-
-**Authentication:** Required
-
-**Query Parameters:**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `page` | integer | `1` | Page number |
-| `per_page` | integer | `20` | Items per page |
-| `status_filter` | string | `null` | Filter by status: `queued`, `processing`, `completed`, `failed` |
-
-**Example:**
-
-```bash
-curl "http://localhost:8000/api/v1/sign/jobs?page=1&per_page=10&status_filter=completed" \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-**Response: `200 OK`**
+When completed:
 
 ```json
 {
-  "jobs": [
-    {
-      "job_id": "a1b2c3d4-...",
-      "status": "completed",
-      "original_filename": "report.vba",
-      "file_size": 15234,
-      "file_hash": "sha256:a1b2c3d4...",
-      "signature": "3045022100...",
-      "certificate_fingerprint": "AB:CD:EF:...",
-      "algorithm": "sha256",
-      "error_message": null,
-      "created_at": "2026-02-12T10:00:00Z",
-      "started_at": "2026-02-12T10:00:01Z",
-      "completed_at": "2026-02-12T10:00:03Z"
-    }
-  ],
-  "total": 47,
-  "page": 1,
-  "per_page": 10
+  "job_id": "a1b2c3d4-...",
+  "status": "completed",
+  "file_hash": "a1b2c3d4...",
+  "signature": "3045022100...",
+  "certificate_fingerprint": "AB:CD:EF:...",
+  "algorithm": "sha256",
+  "started_at": "2026-02-23T10:00:01Z",
+  "completed_at": "2026-02-23T10:00:02Z"
 }
 ```
 
-#### `GET /api/v1/status/{job_id}` -- Check Job Status
+#### `GET /api/v1/sign/jobs` — List Jobs
 
-**Authentication:** Required (owner or admin)
-
-**Path Parameter:** `job_id` (UUID string)
-
-**Response: `200 OK`** -- Single `SigningJobResponse` object.
-
-When `status` is `completed`, the response includes:
-- `file_hash` -- SHA hash of the original file
-- `signature` -- Hex-encoded digital signature
-- `certificate_fingerprint` -- SHA-256 fingerprint of the signing certificate
+Query params: `page` (default 1), `per_page` (default 20), `status_filter`.
 
 ---
 
 ### Verification
 
-#### `POST /api/v1/verify` -- Verify a Signed Macro
+#### `POST /api/v1/verify`
 
-Verify the digital signature on a macro file.
+**Form fields:** `file` (required), `signature` (required hex), `algorithm` (default `sha256`)
 
-**Authentication:** Required (role: `developer`+)
-**Content-Type:** `multipart/form-data`
-**Rate Limited:** Yes
+**Response: 200 OK** — `{ "is_valid": true/false, "message": "...", ... }`
 
-**Form Fields:**
+---
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `file` | file | Yes | -- | The macro file to verify |
-| `signature` | string | Yes | -- | Hex-encoded signature from the signing job |
-| `algorithm` | string | No | `sha256` | Hash algorithm that was used for signing |
+### Health
 
-**Example:**
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/v1/health` | Full check — DB + Redis connectivity |
+| `GET /api/v1/ready` | Kubernetes readiness probe |
+| `GET /api/v1/live` | Kubernetes liveness probe |
 
-```bash
-curl -X POST http://localhost:8000/api/v1/verify \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@financial_report.vba" \
-  -F "signature=3045022100abcdef..." \
-  -F "algorithm=sha256"
-```
+---
 
-**Response: `200 OK`**
+### Auth
 
-```json
-{
-  "is_valid": true,
-  "certificate_subject": "CN=Macro Sign Service",
-  "certificate_issuer": "CN=Macro Sign Service",
-  "certificate_expiry": "2027-02-12T10:00:00Z",
-  "message": "Signature is valid"
-}
-```
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/auth/register` | Create user account |
+| POST | `/auth/login` | Get access + refresh tokens |
+| POST | `/auth/refresh` | Refresh access token |
+| GET | `/auth/me` | Current user profile |
+| POST | `/auth/api-keys` | Create API key |
+| GET | `/auth/api-keys` | List API keys |
+| DELETE | `/auth/api-keys/{id}` | Revoke API key |
 
 ---
 
 ### Webhooks
 
-Receive HTTP callbacks when signing jobs complete.
-
-#### `POST /api/v1/webhooks` -- Create Webhook
-
-**Authentication:** Required (permission: `manage_webhooks`)
-
-**Request Body:**
+Create webhooks to receive push notifications instead of polling.
 
 ```json
+POST /api/v1/webhooks
 {
-  "name": "Slack Notification",
-  "url": "https://myapp.com/hooks/macro-sign",
-  "secret": "my-webhook-secret",
+  "name": "CI Build Notifier",
+  "url": "https://ci.example.com/hooks/macro-sign",
+  "secret": "my-hmac-secret",
   "events": "signing.completed,signing.failed"
 }
 ```
 
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `name` | string | Yes | -- | Webhook display name (1-100 chars) |
-| `url` | string | Yes | -- | HTTPS callback URL (max 2048 chars) |
-| `secret` | string | No | `null` | Shared secret for HMAC signature verification |
-| `events` | string | No | `signing.completed` | Comma-separated event types |
-
-**Response: `201 Created`**
+Payload delivered on event:
 
 ```json
 {
-  "id": "webhook-uuid",
-  "name": "Slack Notification",
-  "url": "https://myapp.com/hooks/macro-sign",
-  "events": "signing.completed,signing.failed",
-  "is_active": true,
-  "created_at": "2026-02-12T10:00:00Z"
+  "event": "signing.completed",
+  "timestamp": "2026-02-23T10:00:03Z",
+  "data": {
+    "job_id": "a1b2c3d4-...",
+    "status": "completed",
+    "signature": "3045022100...",
+    "file_hash": "a1b2c3..."
+  }
 }
 ```
 
-#### `GET /api/v1/webhooks` -- List Webhooks
-
-**Authentication:** Required
-
-**Response: `200 OK`** -- Array of webhook objects.
-
-#### `PATCH /api/v1/webhooks/{webhook_id}` -- Update Webhook
-
-**Authentication:** Required
-
-**Request Body** (all fields optional):
-
-```json
-{
-  "name": "Updated Name",
-  "url": "https://new-url.com/hook",
-  "events": "signing.completed",
-  "is_active": false
-}
-```
-
-**Response: `200 OK`** -- Updated webhook object.
-
-#### `DELETE /api/v1/webhooks/{webhook_id}` -- Delete Webhook
-
-**Authentication:** Required
-
-**Response: `204 No Content`**
+Verified via `X-Webhook-Signature: sha256=<hmac_hex>`. Retried up to 3 times on failure.
 
 ---
 
 ### Admin
 
-Admin endpoints require elevated roles (`admin` or `manager`).
+All admin endpoints require `admin` or `manager` role.
 
-#### Users
-
-| Method | Endpoint | Permission | Description |
-|--------|----------|------------|-------------|
-| `GET` | `/api/v1/admin/users` | `manage_users` | List all users |
-| `PATCH` | `/api/v1/admin/users/{user_id}` | `manage_users` | Update user role/status/team |
-
-#### Teams
-
-| Method | Endpoint | Permission | Description |
-|--------|----------|------------|-------------|
-| `POST` | `/api/v1/admin/teams` | `manage_teams` | Create a team |
-| `GET` | `/api/v1/admin/teams` | `manage_teams` | List all teams |
-| `PATCH` | `/api/v1/admin/teams/{team_id}` | `manage_teams` | Update a team |
-
-#### Signing Profiles
-
-| Method | Endpoint | Permission | Description |
-|--------|----------|------------|-------------|
-| `POST` | `/api/v1/admin/profiles` | `manage_profiles` | Create signing profile |
-| `GET` | `/api/v1/admin/profiles` | authenticated | List signing profiles |
-
-#### Audit Logs
-
-| Method | Endpoint | Permission | Description |
-|--------|----------|------------|-------------|
-| `GET` | `/api/v1/admin/audit` | `view_audit` | View audit logs (paginated) |
-
-Query params: `page`, `per_page`, `action`, `resource_type`
-
-#### Dashboard Statistics
-
-| Method | Endpoint | Permission | Description |
-|--------|----------|------------|-------------|
-| `GET` | `/api/v1/admin/dashboard/stats` | `view_analytics` | Signing stats & analytics |
+| Method | Endpoint | Permission |
+|--------|----------|------------|
+| GET | `/admin/users` | `manage_users` |
+| PATCH | `/admin/users/{id}` | `manage_users` |
+| POST | `/admin/teams` | `manage_teams` |
+| GET | `/admin/teams` | `manage_teams` |
+| POST | `/admin/profiles` | `manage_profiles` |
+| GET | `/admin/profiles` | authenticated |
+| GET | `/admin/audit` | `view_audit` |
+| GET | `/admin/dashboard/stats` | `view_analytics` |
 
 ---
 
-## Request & Response Formats
+## Integration Guide: ServiceNow
 
-### Content Types
+### SNOW Business Rule
 
-| Endpoint | Request Content-Type | Response Content-Type |
-|----------|---------------------|----------------------|
-| JSON endpoints | `application/json` | `application/json` |
-| File upload (`/sign`, `/verify`) | `multipart/form-data` | `application/json` |
+Trigger macro signing automatically when a record containing a VBA attachment is inserted or updated.
 
-### Common Response Headers
+```javascript
+// Business Rule: "Sign VBA Attachment on Submit"
+// Table: sys_script_include   When: before insert/update
 
-| Header | Description |
-|--------|-------------|
-| `X-Request-ID` | Unique request identifier (send your own or auto-generated) |
-| `X-RateLimit-Limit` | Max requests per window |
-| `X-RateLimit-Remaining` | Remaining requests in window |
-| `X-RateLimit-Reset` | Window reset time (Unix timestamp) |
+(function executeRule(current, previous) {
+    var SIGN_URL   = gs.getProperty('macro_sign.url', 'http://macro-sign-api:8000');
+    var SIGN_KEY   = gs.getProperty('macro_sign.api_key');
+    var DOMAIN     = gs.getProperty('macro_sign.domain', 'snow-test-domain');
 
-### Pagination
+    var attachment = new GlideSysAttachment();
+    var attachData = attachment.getContent(current);  // base64 string
 
-Paginated endpoints return:
+    if (!attachData) return;
 
-```json
-{
-  "items": [...],
-  "total": 150,
-  "page": 1,
-  "per_page": 20
+    // Build multipart request via RESTMessageV2
+    var req = new sn_ws.RESTMessageV2();
+    req.setEndpoint(SIGN_URL + '/api/v1/snow/sign');
+    req.setHttpMethod('POST');
+    req.setRequestHeader('X-API-Key', SIGN_KEY);
+
+    req.setRequestBodyFromBase64String(attachData);   // file bytes
+    req.setRequestHeader('Content-Type', 'multipart/form-data');
+
+    // Note: Use a MID Server Script for binary multipart in production.
+    // Simplified version using JSON body for illustration:
+    var body = {
+        requester_id: current.sys_id.toString(),
+        table:        current.getTableName(),
+        domain:       DOMAIN,
+        algorithm:    'sha256'
+    };
+
+    var resp = req.execute();
+    if (resp.getStatusCode() == 200) {
+        var data = JSON.parse(resp.getBody());
+        current.u_macro_signature         = data.signature;
+        current.u_cert_fingerprint        = data.certificate_fingerprint;
+        current.u_macro_signed_at         = data.signed_at;
+        current.u_macro_signing_status    = 'signed';
+    } else {
+        current.u_macro_signing_status = 'failed';
+        gs.error('Macro Sign Service error: ' + resp.getBody());
+    }
+})(current, previous);
+```
+
+---
+
+### SNOW Script Include
+
+Reusable utility class callable from Business Rules, Flow Designer, and REST API scripts.
+
+```javascript
+// Script Include: MacroSignUtil   Client callable: false
+var MacroSignUtil = Class.create();
+MacroSignUtil.prototype = {
+    initialize: function() {
+        this.baseUrl = gs.getProperty('macro_sign.url', 'http://macro-sign-api:8000');
+        this.apiKey  = gs.getProperty('macro_sign.api_key');
+    },
+
+    /**
+     * Sign a macro file.
+     * @param {string} fileContentB64 - Base64-encoded file bytes
+     * @param {string} filename        - Original filename (e.g. "report.vba")
+     * @param {string} requesterId     - SNOW sys_id of the requester
+     * @param {string} table           - SNOW table name (for audit)
+     * @returns {Object|null}          - Parsed sign response or null on error
+     */
+    signMacro: function(fileContentB64, filename, requesterId, table) {
+        var req = new sn_ws.RESTMessageV2();
+        req.setEndpoint(this.baseUrl + '/api/v1/snow/sign');
+        req.setHttpMethod('POST');
+        req.setRequestHeader('X-API-Key', this.apiKey);
+        req.setQueryParameter('requester_id', requesterId);
+        req.setQueryParameter('table', table || '');
+        // File bytes and filename sent as multipart — handled via MID Server in prod
+
+        var resp = req.execute();
+        if (resp.getStatusCode() == 200) {
+            return JSON.parse(resp.getBody());
+        }
+        gs.error('MacroSignUtil.signMacro failed [' + resp.getStatusCode() + ']: ' + resp.getBody());
+        return null;
+    },
+
+    /**
+     * Verify a previously signed macro.
+     * @param {string} fileContentB64 - Base64-encoded original file bytes
+     * @param {string} signature      - Hex-encoded signature from signMacro()
+     * @param {string} filename       - Original filename
+     * @returns {boolean} isValid
+     */
+    verifyMacro: function(fileContentB64, signature, filename) {
+        var req = new sn_ws.RESTMessageV2();
+        req.setEndpoint(this.baseUrl + '/api/v1/snow/verify');
+        req.setHttpMethod('POST');
+        req.setRequestHeader('X-API-Key', this.apiKey);
+        req.setQueryParameter('signature', signature);
+
+        var resp = req.execute();
+        if (resp.getStatusCode() == 200) {
+            return JSON.parse(resp.getBody()).is_valid === true;
+        }
+        return false;
+    },
+
+    /**
+     * List available signing certificates.
+     * @returns {Array<string>}
+     */
+    listCertificates: function() {
+        var req = new sn_ws.RESTMessageV2();
+        req.setEndpoint(this.baseUrl + '/api/v1/snow/certs');
+        req.setHttpMethod('GET');
+        req.setRequestHeader('X-API-Key', this.apiKey);
+
+        var resp = req.execute();
+        if (resp.getStatusCode() == 200) {
+            return JSON.parse(resp.getBody()).certificates;
+        }
+        return [];
+    },
+
+    type: 'MacroSignUtil'
+};
+```
+
+---
+
+### SNOW Flow Designer Action
+
+Create a custom **Flow Designer Action** for no-code signing in workflows:
+
+1. **Action Input:** `file_sys_id` (Reference), `requester_id` (String)
+2. **Script step:**
+
+```javascript
+(function execute(inputs, outputs) {
+    var util = new MacroSignUtil();
+    var attach = new GlideSysAttachment();
+    var content = attach.getContentBase64(
+        new GlideRecord('sys_attachment').initialize()  // use inputs.file_sys_id
+    );
+
+    var result = util.signMacro(content, 'macro.vba', inputs.requester_id, 'flow');
+
+    if (result) {
+        outputs.signature    = result.signature;
+        outputs.file_hash    = result.file_hash;
+        outputs.signed_at    = result.signed_at;
+        outputs.status       = 'signed';
+    } else {
+        outputs.status = 'failed';
+    }
+})(inputs, outputs);
+```
+
+3. **Action Output:** `signature` (String), `file_hash` (String), `signed_at` (String), `status` (String)
+
+---
+
+### Storing Signature in a SNOW Record
+
+After calling `/snow/sign`, store these fields on your target table:
+
+| API response field | Recommended SNOW field | Type |
+|-------------------|------------------------|------|
+| `signature` | `u_macro_signature` | String (max 2048) |
+| `certificate_fingerprint` | `u_cert_fingerprint` | String (max 100) |
+| `file_hash` | `u_macro_file_hash` | String (max 100) |
+| `signed_at` | `u_macro_signed_at` | Date/Time |
+| `certificate_subject` | `u_cert_subject` | String (max 255) |
+| `domain` | `u_signing_domain` | String (max 100) |
+
+To verify later, retrieve the original file bytes (from the attachment) and the stored `u_macro_signature`, then call `/snow/verify`.
+
+---
+
+## Integration Guide: CI/CD Pipelines
+
+### GitHub Actions — check-in trigger
+
+Trigger macro signing on every push or pull request. Uses the **async** `/sign` endpoint with polling.
+
+```yaml
+# .github/workflows/sign-macros.yml
+name: Sign VBA Macros
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ['src/macros/**/*.vba', 'src/macros/**/*.bas']
+  pull_request:
+    paths: ['src/macros/**/*.vba', 'src/macros/**/*.bas']
+
+jobs:
+  sign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign changed macro files
+        env:
+          MACRO_SIGN_URL: ${{ vars.MACRO_SIGN_URL }}
+          MACRO_SIGN_API_KEY: ${{ secrets.MACRO_SIGN_API_KEY }}
+        run: |
+          set -euo pipefail
+
+          sign_and_verify() {
+            local file="$1"
+            echo "Signing: $file"
+
+            # Submit signing job
+            local response
+            response=$(curl -sf -X POST "$MACRO_SIGN_URL/api/v1/sign" \
+              -H "X-API-Key: $MACRO_SIGN_API_KEY" \
+              -F "file=@$file" \
+              -F "algorithm=sha256")
+
+            local job_id
+            job_id=$(echo "$response" | jq -r '.job_id')
+            echo "Job ID: $job_id"
+
+            # Poll until completed (max 60 seconds)
+            for i in $(seq 1 30); do
+              local result
+              result=$(curl -sf "$MACRO_SIGN_URL/api/v1/status/$job_id" \
+                -H "X-API-Key: $MACRO_SIGN_API_KEY")
+              local status
+              status=$(echo "$result" | jq -r '.status')
+
+              case "$status" in
+                completed)
+                  local sig
+                  sig=$(echo "$result" | jq -r '.signature')
+                  echo "Signed $file — signature: ${sig:0:16}..."
+                  echo "$sig" > "${file}.sig"
+                  return 0
+                  ;;
+                failed)
+                  echo "ERROR: Signing failed for $file"
+                  echo "$result" | jq '.error_message'
+                  return 1
+                  ;;
+              esac
+              sleep 2
+            done
+
+            echo "ERROR: Signing timed out for $file"
+            return 1
+          }
+
+          # Sign all changed macro files
+          git diff --name-only HEAD~1 HEAD -- '*.vba' '*.bas' '*.cls' | \
+            while read -r file; do
+              [ -f "$file" ] && sign_and_verify "$file"
+            done
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-macros
+          path: |
+            src/macros/**/*.vba
+            src/macros/**/*.sig
+```
+
+#### Using the synchronous SNOW endpoint from GitHub Actions
+
+If you prefer a simpler one-shot call (no polling), use the SNOW endpoint:
+
+```yaml
+      - name: Sign macro (synchronous)
+        env:
+          MACRO_SIGN_URL: ${{ vars.MACRO_SIGN_URL }}
+          MACRO_SIGN_API_KEY: ${{ secrets.MACRO_SIGN_API_KEY }}
+        run: |
+          RESULT=$(curl -sf -X POST "$MACRO_SIGN_URL/api/v1/snow/sign" \
+            -H "X-API-Key: $MACRO_SIGN_API_KEY" \
+            -F "file=@src/macros/report.vba" \
+            -F "requester_id=github-actions-${{ github.run_id }}")
+
+          echo "$RESULT" | jq -r '.signature' > src/macros/report.vba.sig
+          echo "Signed: $(echo $RESULT | jq -r '.file_hash')"
+```
+
+---
+
+### Azure DevOps Pipeline
+
+```yaml
+# azure-pipelines.yml
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: ['src/macros/*.vba']
+
+pool:
+  vmImage: ubuntu-latest
+
+steps:
+  - task: Bash@3
+    displayName: Sign VBA macros
+    env:
+      MACRO_SIGN_URL: $(MACRO_SIGN_URL)
+      MACRO_SIGN_API_KEY: $(MACRO_SIGN_API_KEY)
+    inputs:
+      targetType: inline
+      script: |
+        for FILE in src/macros/*.vba; do
+          echo "Signing $FILE"
+
+          RESULT=$(curl -sf -X POST "$MACRO_SIGN_URL/api/v1/snow/sign" \
+            -H "X-API-Key: $MACRO_SIGN_API_KEY" \
+            -F "file=@$FILE" \
+            -F "requester_id=azdo-$(Build.BuildId)")
+
+          echo $RESULT | jq -r '.signature' > "$FILE.sig"
+          echo "Done: $FILE"
+        done
+
+  - task: PublishBuildArtifacts@1
+    inputs:
+      pathToPublish: src/macros
+      artifactName: signed-macros
+```
+
+---
+
+### Jenkins Pipeline
+
+```groovy
+pipeline {
+    agent any
+    environment {
+        MACRO_SIGN_URL = credentials('macro-sign-url')
+        MACRO_SIGN_API_KEY = credentials('macro-sign-api-key')
+    }
+    triggers {
+        pollSCM('H/5 * * * *')  // or use webhook trigger
+    }
+    stages {
+        stage('Sign Macros') {
+            when {
+                changeset 'src/macros/**/*.vba'
+            }
+            steps {
+                sh '''
+                    for FILE in src/macros/*.vba; do
+                        RESULT=$(curl -sf -X POST "$MACRO_SIGN_URL/api/v1/snow/sign" \
+                          -H "X-API-Key: $MACRO_SIGN_API_KEY" \
+                          -F "file=@$FILE" \
+                          -F "requester_id=jenkins-${BUILD_NUMBER}")
+                        echo $RESULT | jq -r '.signature' > "$FILE.sig"
+                    done
+                '''
+            }
+        }
+        stage('Archive') {
+            steps {
+                archiveArtifacts artifacts: 'src/macros/*.vba,src/macros/*.sig'
+            }
+        }
+    }
 }
+```
+
+---
+
+### Generic Shell Script
+
+For any CI/CD system, here is a complete shell helper:
+
+```bash
+#!/usr/bin/env bash
+# macro-sign.sh — Sign a macro file and write the signature to <file>.sig
+# Usage: ./macro-sign.sh <file.vba> [algorithm]
+# Env:   MACRO_SIGN_URL, MACRO_SIGN_API_KEY
+set -euo pipefail
+
+FILE="${1:?Usage: $0 <file.vba> [algorithm]}"
+ALGORITHM="${2:-sha256}"
+API_URL="${MACRO_SIGN_URL:?Set MACRO_SIGN_URL}"
+API_KEY="${MACRO_SIGN_API_KEY:?Set MACRO_SIGN_API_KEY}"
+
+echo "[macro-sign] Signing $FILE with $ALGORITHM..."
+
+RESULT=$(curl -sf -X POST "$API_URL/api/v1/snow/sign" \
+  -H "X-API-Key: $API_KEY" \
+  -F "file=@$FILE" \
+  -F "algorithm=$ALGORITHM" \
+  -F "requester_id=cicd-pipeline")
+
+STATUS=$(echo "$RESULT" | jq -r '.status')
+if [ "$STATUS" != "signed" ]; then
+  echo "[macro-sign] ERROR: unexpected status '$STATUS'"
+  echo "$RESULT" | jq .
+  exit 1
+fi
+
+SIG=$(echo "$RESULT" | jq -r '.signature')
+HASH=$(echo "$RESULT" | jq -r '.file_hash')
+echo "$SIG" > "$FILE.sig"
+
+echo "[macro-sign] Done"
+echo "  File hash : $HASH"
+echo "  Signature : ${SIG:0:24}..."
+echo "  Saved to  : $FILE.sig"
 ```
 
 ---
 
 ## Error Handling
 
-All errors return a consistent JSON structure:
+All errors return a consistent JSON body:
 
 ```json
-{
-  "detail": "Human-readable error message"
-}
+{ "detail": "Human-readable error message" }
 ```
 
-### HTTP Status Codes
-
-| Code | Meaning | When |
-|------|---------|------|
-| `200` | OK | Successful request |
-| `201` | Created | Resource created (register, create webhook, etc.) |
-| `202` | Accepted | Signing job queued for async processing |
-| `204` | No Content | Successful deletion |
-| `400` | Bad Request | Invalid input, file validation error |
-| `401` | Unauthorized | Missing or invalid token |
-| `403` | Forbidden | Insufficient permissions |
-| `404` | Not Found | Resource does not exist |
-| `409` | Conflict | Duplicate resource (e.g., existing username) |
+| Code | Meaning | Common causes |
+|------|---------|---------------|
+| `200` | OK | Successful synchronous sign/verify |
+| `202` | Accepted | Async signing job queued |
+| `400` | Bad Request | Invalid extension, empty file, file too large, bad signature hex |
+| `401` | Unauthorized | Missing or expired token / API key |
+| `403` | Forbidden | Insufficient RBAC permissions |
+| `404` | Not Found | Job ID not found |
+| `422` | Unprocessable Entity | Missing required form fields |
 | `429` | Too Many Requests | Rate limit exceeded |
-| `500` | Internal Server Error | Unexpected server error |
-
-### Common Error Responses
-
-**Invalid credentials:**
-
-```json
-{
-  "detail": "Invalid username or password"
-}
-```
-
-**File validation failure:**
-
-```json
-{
-  "detail": "File extension '.exe' is not allowed. Allowed: .vba, .bas, .cls, .frm, .vbs"
-}
-```
-
-**Rate limited:**
-
-```json
-{
-  "detail": "Rate limit exceeded. Try again in 45 seconds."
-}
-```
+| `500` | Internal Server Error | Unhandled exception |
+| `503` | Service Unavailable | Certificate not available in key store |
 
 ---
 
 ## Rate Limiting
 
-The following endpoints are rate limited:
+`POST /sign` and `POST /verify` are rate limited (default 60 req/min per user).
 
-| Endpoint | Limit |
-|----------|-------|
-| `POST /api/v1/sign` | 60 requests/minute (default) |
-| `POST /api/v1/verify` | 60 requests/minute (default) |
-
-Rate limit headers are included in every response:
+Response headers:
 
 ```
 X-RateLimit-Limit: 60
@@ -721,367 +954,127 @@ X-RateLimit-Remaining: 55
 X-RateLimit-Reset: 1707739200
 ```
 
-When exceeded, the API returns `429 Too Many Requests`.
+`POST /snow/sign` and `POST /snow/verify` are not rate limited by default to accommodate synchronous SNOW form submissions.
 
 ---
 
 ## Webhook Events
 
-When a webhook is configured, the service sends HTTP POST requests to the registered URL on signing events.
-
-### Event Types
-
 | Event | Trigger |
 |-------|---------|
-| `signing.completed` | Job finished successfully |
-| `signing.failed` | Job failed |
+| `signing.completed` | Async job finished successfully |
+| `signing.failed` | Async job failed |
 
-### Payload Format
-
-```json
-{
-  "event": "signing.completed",
-  "timestamp": "2026-02-12T10:00:03Z",
-  "data": {
-    "job_id": "a1b2c3d4-...",
-    "status": "completed",
-    "original_filename": "report.vba",
-    "file_hash": "sha256:a1b2c3d4...",
-    "signature": "3045022100...",
-    "certificate_fingerprint": "AB:CD:EF:...",
-    "algorithm": "sha256"
-  }
-}
-```
-
-### Security
-
-If a `secret` is configured for the webhook, each request includes an HMAC-SHA256 signature header:
-
-```
-X-Webhook-Signature: sha256=<hmac_hex_digest>
-```
-
-Verify by computing `HMAC-SHA256(secret, request_body)` and comparing.
-
-### Retry Policy
-
-| Attempt | Delay |
-|---------|-------|
-| 1st retry | Immediate |
-| 2nd retry | 30 seconds |
-| 3rd retry | 5 minutes |
-| Max retries | 3 |
-
-Timeout: 30 seconds per attempt.
+SNOW-specific audit events (`snow.signing.completed`, `snow.verification.completed`) are written to the database audit log but do **not** fire webhooks since the SNOW endpoint is synchronous.
 
 ---
 
 ## File Requirements
 
-### Supported File Types
+| Extension | Type |
+|-----------|------|
+| `.vba` | VBA macro source |
+| `.bas` | VBA module |
+| `.cls` | VBA class module |
+| `.frm` | VBA form |
+| `.vbs` | VBScript |
 
-| Extension | Description |
-|-----------|-------------|
-| `.vba` | VBA macro source files |
-| `.bas` | VBA module files |
-| `.cls` | VBA class module files |
-| `.frm` | VBA form files |
-| `.vbs` | VBScript files |
+| Constraint | Limit |
+|------------|-------|
+| Max file size | 50 MB |
+| Min file size | 1 byte |
+| Path traversal (`../`, `\`) | Rejected |
+| Null bytes in filename | Rejected |
 
-### Constraints
-
-| Constraint | Value |
-|-----------|-------|
-| Maximum file size | 50 MB |
-| Minimum file size | 1 byte (non-empty) |
-| Path traversal | Rejected (`../`, absolute paths, backslashes) |
-| Null bytes | Rejected |
-
-### Content Scanning
-
-Uploaded files are scanned for potentially dangerous patterns (e.g., `Shell()`, `WScript.Shell`, `PowerShell`, `cmd.exe`). These generate warnings in audit logs but do **not** block signing.
-
----
-
-## SDKs & Integration Examples
-
-### Python
-
-```python
-import requests
-
-API_URL = "http://localhost:8000/api/v1"
-
-# Login
-resp = requests.post(f"{API_URL}/auth/login", json={
-    "username": "developer",
-    "password": "SecurePass123!"
-})
-token = resp.json()["access_token"]
-headers = {"Authorization": f"Bearer {token}"}
-
-# Sign a file
-with open("macro.vba", "rb") as f:
-    resp = requests.post(
-        f"{API_URL}/sign",
-        headers=headers,
-        files={"file": ("macro.vba", f)},
-        data={"algorithm": "sha256"},
-    )
-job = resp.json()
-print(f"Job ID: {job['job_id']}, Status: {job['status']}")
-
-# Poll for completion
-import time
-while True:
-    resp = requests.get(f"{API_URL}/status/{job['job_id']}", headers=headers)
-    status = resp.json()
-    if status["status"] in ("completed", "failed"):
-        break
-    time.sleep(2)
-
-if status["status"] == "completed":
-    print(f"Signature: {status['signature']}")
-    print(f"File Hash: {status['file_hash']}")
-
-# Verify
-with open("macro.vba", "rb") as f:
-    resp = requests.post(
-        f"{API_URL}/verify",
-        headers=headers,
-        files={"file": ("macro.vba", f)},
-        data={
-            "signature": status["signature"],
-            "algorithm": "sha256",
-        },
-    )
-print(f"Valid: {resp.json()['is_valid']}")
-```
-
-### JavaScript / Node.js
-
-```javascript
-const fs = require("fs");
-const FormData = require("form-data");
-
-const API_URL = "http://localhost:8000/api/v1";
-
-async function signMacro() {
-  // Login
-  const loginResp = await fetch(`${API_URL}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "developer", password: "SecurePass123!" }),
-  });
-  const { access_token } = await loginResp.json();
-
-  // Sign
-  const form = new FormData();
-  form.append("file", fs.createReadStream("macro.vba"));
-  form.append("algorithm", "sha256");
-
-  const signResp = await fetch(`${API_URL}/sign`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${access_token}`, ...form.getHeaders() },
-    body: form,
-  });
-  const job = await signResp.json();
-  console.log(`Job ${job.job_id}: ${job.status}`);
-
-  // Poll
-  let result;
-  do {
-    await new Promise((r) => setTimeout(r, 2000));
-    const statusResp = await fetch(`${API_URL}/status/${job.job_id}`, {
-      headers: { Authorization: `Bearer ${access_token}` },
-    });
-    result = await statusResp.json();
-  } while (!["completed", "failed"].includes(result.status));
-
-  console.log(`Signature: ${result.signature}`);
-}
-
-signMacro();
-```
-
-### cURL (CI/CD Pipeline)
-
-```bash
-#!/bin/bash
-set -e
-
-API_URL="http://localhost:8000/api/v1"
-USERNAME="ci-bot"
-PASSWORD="$CI_SIGN_PASSWORD"
-FILE_PATH="$1"
-
-# Login
-TOKEN=$(curl -sf -X POST "$API_URL/auth/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\":\"$USERNAME\",\"password\":\"$PASSWORD\"}" \
-  | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
-
-# Submit signing job
-JOB=$(curl -sf -X POST "$API_URL/sign" \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@$FILE_PATH" \
-  -F "algorithm=sha256")
-
-JOB_ID=$(echo "$JOB" | python3 -c "import sys,json; print(json.load(sys.stdin)['job_id'])")
-echo "Signing job submitted: $JOB_ID"
-
-# Poll until complete
-while true; do
-  STATUS=$(curl -sf "$API_URL/status/$JOB_ID" \
-    -H "Authorization: Bearer $TOKEN")
-  JOB_STATUS=$(echo "$STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin)['status'])")
-
-  echo "Status: $JOB_STATUS"
-  [ "$JOB_STATUS" = "completed" ] && break
-  [ "$JOB_STATUS" = "failed" ] && echo "FAILED" && exit 1
-  sleep 2
-done
-
-# Extract signature
-SIGNATURE=$(echo "$STATUS" | python3 -c "import sys,json; print(json.load(sys.stdin)['signature'])")
-echo "Signature: $SIGNATURE"
-```
-
-### GitHub Actions
-
-```yaml
-- name: Sign VBA Macro
-  run: |
-    # Login
-    TOKEN=$(curl -sf -X POST ${{ vars.MACRO_SIGN_URL }}/api/v1/auth/login \
-      -H "Content-Type: application/json" \
-      -d '{"username":"${{ secrets.SIGN_USER }}","password":"${{ secrets.SIGN_PASS }}"}' \
-      | jq -r '.access_token')
-
-    # Sign
-    JOB_ID=$(curl -sf -X POST ${{ vars.MACRO_SIGN_URL }}/api/v1/sign \
-      -H "Authorization: Bearer $TOKEN" \
-      -F "file=@src/macros/report.vba" \
-      | jq -r '.job_id')
-
-    # Wait for completion
-    for i in $(seq 1 30); do
-      STATUS=$(curl -sf ${{ vars.MACRO_SIGN_URL }}/api/v1/status/$JOB_ID \
-        -H "Authorization: Bearer $TOKEN" | jq -r '.status')
-      [ "$STATUS" = "completed" ] && break
-      [ "$STATUS" = "failed" ] && exit 1
-      sleep 2
-    done
-```
+Uploaded files are scanned for patterns like `Shell()`, `WScript.Shell`, `PowerShell`, `cmd.exe`. These generate warnings in the audit log but do **not** block signing.
 
 ---
 
 ## Environment Configuration
 
-All settings are configured via environment variables or a `.env` file.
+### SNOW-Specific Settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CERT_STORE_BACKEND` | `local` | Key store backend: `local`, `hashicorp_vault`, `aws_kms`, `azure_keyvault` |
+| `AZURE_KEYVAULT_URL` | — | Required when using Azure Key Vault backend |
+| `AZURE_TENANT_ID` | — | Service-principal auth (optional — uses DefaultAzureCredential if unset) |
+| `AZURE_CLIENT_ID` | — | Service-principal client ID |
+| `AZURE_CLIENT_SECRET` | — | Service-principal client secret |
 
 ### Core Settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `APP_ENV` | `development` | Environment: `development`, `staging`, `production`, `testing` |
-| `APP_DEBUG` | `false` | Enable debug mode |
-| `APP_SECRET_KEY` | -- | Application secret key (change in production) |
+| `APP_ENV` | `development` | `development` \| `staging` \| `production` \| `testing` |
+| `APP_SECRET_KEY` | — | App secret key (change in production) |
 | `APP_PORT` | `8000` | API server port |
-
-### Database
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql+asyncpg://macrosign:macrosign@localhost:5432/macrosign` | PostgreSQL connection URL |
-| `DATABASE_POOL_SIZE` | `20` | Connection pool size |
-
-### Authentication
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JWT_SECRET_KEY` | -- | JWT signing secret (change in production) |
-| `JWT_ALGORITHM` | `HS256` | JWT algorithm |
+| `DATABASE_URL` | `postgresql+asyncpg://...` | PostgreSQL connection URL |
+| `JWT_SECRET_KEY` | — | JWT signing secret |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | Access token lifetime |
-| `JWT_REFRESH_TOKEN_EXPIRE_MINUTES` | `10080` | Refresh token lifetime (7 days) |
-
-### Certificate Store
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CERT_STORE_BACKEND` | `local` | Backend: `local`, `hashicorp_vault`, `aws_kms`, `azure_keyvault` |
-| `CERT_LOCAL_CERT_PATH` | `./certs/signing_cert.pem` | Local certificate path |
-| `CERT_LOCAL_KEY_PATH` | `./certs/signing_key.pem` | Local private key path |
-| `VAULT_URL` | `http://localhost:8200` | HashiCorp Vault URL |
-| `AWS_KMS_KEY_ID` | -- | AWS KMS key identifier |
-| `AZURE_KEYVAULT_URL` | -- | Azure Key Vault URL |
-
-### Signing
-
-| Variable | Default | Description |
-|----------|---------|-------------|
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
+| `CELERY_BROKER_URL` | `redis://localhost:6379/1` | Celery broker |
 | `SIGNING_DEFAULT_ALGORITHM` | `sha256` | Default hash algorithm |
-| `SIGNING_MAX_FILE_SIZE_MB` | `50` | Max upload file size in MB |
-| `SIGNING_ALLOWED_EXTENSIONS` | `.vba,.bas,.cls,.frm,.vbs` | Allowed file extensions |
-
-### Rate Limiting
-
-| Variable | Default | Description |
-|----------|---------|-------------|
+| `SIGNING_MAX_FILE_SIZE_MB` | `50` | Max upload size |
 | `RATE_LIMIT_ENABLED` | `true` | Enable rate limiting |
 | `RATE_LIMIT_REQUESTS_PER_MINUTE` | `60` | Requests per minute per user |
-
-### Redis & Celery
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL |
-| `CELERY_BROKER_URL` | `redis://localhost:6379/1` | Celery broker URL |
-| `CELERY_RESULT_BACKEND` | `redis://localhost:6379/2` | Celery result backend URL |
 
 ---
 
 ## Running Tests
 
-### Setup
-
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-pip install aiosqlite
-```
 
-### Run Tests
+# All tests
+pytest tests/ -v
 
-```bash
-# All unit tests
+# Unit tests only
 pytest tests/unit/ -v
 
-# Signing engine tests only
-pytest tests/unit/test_signing_engine.py -v
+# SNOW integration tests only
+pytest tests/integration/test_snow_integration.py -v
 
-# With coverage report
+# With coverage
 pytest tests/ -v --cov=src --cov-report=term-missing
-
-# Specific test class
-pytest tests/unit/test_signing_engine.py::TestSigning -v
 ```
 
-### Test Coverage Areas
+### Test Coverage
 
-| Test Suite | File | Coverage |
-|-----------|------|----------|
-| Signing Engine | `test_signing_engine.py` | Sign, verify, certificates, algorithms |
-| File Validator | `test_file_validator.py` | Upload validation, security checks |
-| Certificate Store | `test_certificate_store.py` | Store, retrieve, rotate, delete certs |
-| JWT Handler | `test_jwt_handler.py` | Token creation, verification, API keys |
-| Password | `test_password.py` | Hashing and verification |
-| Rate Limiter | `test_rate_limiter.py` | Request limiting |
-| Settings | `test_settings.py` | Configuration loading |
-| API Integration | `test_api.py` | End-to-end API tests |
+| Suite | File | Tests | Coverage areas |
+|-------|------|-------|----------------|
+| Signing Engine | `unit/test_signing_engine.py` | 27 | Sign, verify, algorithms, cert loading |
+| File Validator | `unit/test_file_validator.py` | 14 | Extensions, size, path traversal, patterns |
+| Certificate Store | `unit/test_certificate_store.py` | 8 | CRUD, rotation, metadata |
+| JWT Handler | `unit/test_jwt_handler.py` | 10 | Tokens, API keys, hashing |
+| Password | `unit/test_password.py` | 6 | Bcrypt hash/verify |
+| Rate Limiter | `unit/test_rate_limiter.py` | 5 | Sliding window, headers |
+| Settings | `unit/test_settings.py` | 9 | Config loading |
+| **SNOW Integration** | `integration/test_snow_integration.py` | **46** | Full SNOW flow, tamper detection, keystore, rotation, round-trip |
+| API Templates | `integration/test_api.py` | 4 | Structural templates |
+| **Total** | | **129** | |
+
+**SNOW test scenarios covered:**
+
+| ID | Scenario |
+|----|----------|
+| SNOW-001/002/003 | Happy path — VBA / BAS / CLS files signed and returned |
+| SNOW-004 | Algorithm variants — sha256, sha384, sha512 |
+| SNOW-005 | Round-trip — sign then verify |
+| SNOW-006 | Same-user flow — user who signed can verify |
+| SNOW-007 | `requester_id` echoed in response |
+| SNOW-008 | Unsupported extension rejected (400) |
+| SNOW-009 | Oversized file rejected (400) |
+| SNOW-010 | Unauthenticated request rejected (401) |
+| SNOW-011 | Tampered file fails verification |
+| SNOW-012 | Tampered signature fails verification |
+| SNOW-013 | Key store listing |
+| SNOW-014 | `get_or_create` auto-provisions missing cert |
+| SNOW-015 | `get_or_create` returns existing cert without overwrite |
+| SNOW-016 | Certificate rotation invalidates old signature |
+| SNOW-017 | PEM cert in response is valid and verifiable |
+| SNOW-018 | Multiple files signed sequentially (stateless) |
 
 ---
 
@@ -1089,33 +1082,24 @@ pytest tests/unit/test_signing_engine.py::TestSigning -v
 
 ### Prometheus Metrics
 
-Available at `GET /metrics` on the API server.
+Available at `GET /metrics`:
 
-Key metrics:
-- `http_requests_total` -- Total HTTP requests by method/status/path
-- `http_request_duration_seconds` -- Request latency histogram
-- `http_requests_in_progress` -- Current in-flight requests
+| Metric | Description |
+|--------|-------------|
+| `http_requests_total` | Total requests by method / status / path |
+| `http_request_duration_seconds` | Request latency histogram |
+| `http_requests_in_progress` | In-flight requests |
 
-### Grafana Dashboard
+### Grafana
 
-Access at `http://localhost:3001` (default credentials: `admin`/`admin`).
+Access at `http://localhost:3001` (default `admin`/`admin`). Pre-configured **Macro Sign Overview** dashboard.
 
-Pre-configured dashboards:
-- **Macro Sign Overview** -- Request rates, latency, error rates, signing job stats
-
-### Health Check Integration
-
-For load balancers and container orchestration:
+### Health Endpoints
 
 ```bash
-# Full health check (checks DB + Redis)
-curl http://localhost:8000/api/v1/health
-
-# Kubernetes readiness probe
-curl http://localhost:8000/api/v1/ready
-
-# Kubernetes liveness probe
-curl http://localhost:8000/api/v1/live
+curl http://localhost:8000/api/v1/health   # DB + Redis check
+curl http://localhost:8000/api/v1/ready    # Kubernetes readiness
+curl http://localhost:8000/api/v1/live     # Kubernetes liveness
 ```
 
 ---

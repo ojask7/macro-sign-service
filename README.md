@@ -1,4 +1,4 @@
-# 🔐 Macro Sign Service
+# Macro Sign Service
 
 > Enterprise-grade macro signing service that automates digital signing of Office macros (VBA) for speed, security, and compliance.
 
@@ -6,51 +6,104 @@
 
 ---
 
-## 🧐 What is this?
+## What is this?
 
-Organizations that use Office macros face a constant challenge: **unsigned macros are a security risk**, but manually signing them slows down development. Macro Sign Service solves this by providing a centralized, automated signing service that integrates into your existing CI/CD pipelines.
+Organizations that use Office macros face a constant challenge: **unsigned macros are a security risk**, but manually signing them slows down development. Macro Sign Service solves this by providing a centralized, automated signing service that integrates into your existing **CI/CD pipelines** and **ServiceNow (SNOW) workflows**.
 
 ### Key Features
 
-- **Automated Macro Signing** — Submit VBA macro files via API and receive signed files back in seconds
-- **Certificate Management** — Integrates with Azure Key Vault, AWS KMS, and HashiCorp Vault for secure certificate storage
-- **CI/CD Integration** — GitHub Actions, Azure DevOps, and Jenkins plugins for seamless pipeline integration
-- **Audit Trail** — Full logging of every signing operation for compliance and forensics
-- **Role-Based Access Control** — Teams and users with granular permissions
+- **Synchronous SNOW signing** — ServiceNow forms submit a macro and receive the signed content back in a single HTTP call (no polling)
+- **Async CI/CD signing** — Pipeline check-in events trigger signing jobs processed by Celery workers
+- **Certificate Management** — Integrates with Azure Key Vault, AWS KMS, HashiCorp Vault, and local filesystem
+- **Audit Trail** — Every signing operation is logged with user, IP, file hash, and certificate fingerprint
+- **Role-Based Access Control** — Granular permissions for admins, managers, developers, and viewers
 - **Admin Dashboard** — Web UI for managing certificates, viewing signing history, and monitoring usage
 - **CLI Tool** — Sign macros locally during development
 
 ---
 
-## 🏗️ Architecture
+## Architecture
+
+The service supports two distinct consumer patterns: **ServiceNow GUI** (synchronous, returns signed content directly) and **CI/CD pipelines** (asynchronous, job-based).
 
 ```
-┌─────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  CI/CD      │     │   Macro Sign     │     │  Certificate    │
-│  Pipeline / │────▶│   Service API    │────▶│  Store          │
-│  CLI / UI   │     │  (FastAPI)       │     │  (Vault/KMS)    │
-└─────────────┘     └───────┬──────────┘     └─────────────────┘
-                            │
-                    ┌───────▼──────────┐
-                    │   Task Queue     │
-                    │   (Celery/Redis) │
-                    └───────┬──────────┘
-                            │
-                    ┌───────▼──────────┐
-                    │   PostgreSQL     │
-                    │   (Audit Logs)   │
-                    └──────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│  CONSUMERS                                                              │
+│                                                                         │
+│  ┌───────────────────┐   POST /api/v1/snow/sign                        │
+│  │  ServiceNow (SNOW)│ ─────────────────────────────────┐              │
+│  │  Form / Business  │   ◄── 200 OK (signed_content_b64,│              │
+│  │  Rule / Script    │        signature, cert_pem)       │              │
+│  │  Include          │                                   │              │
+│  └───────────────────┘                                   │              │
+│                                                          ▼              │
+│  ┌───────────────────┐   POST /api/v1/sign        ┌──────────────────┐ │
+│  │  CI/CD Pipeline   │ ──────────────────────────▶│  FastAPI API     │ │
+│  │  (GitHub Actions, │   ◄── 202 Accepted (job_id) │  (uvicorn:8000)  │ │
+│  │  Azure DevOps,    │                             └────────┬─────────┘ │
+│  │  Jenkins)         │   GET /api/v1/status/{job_id}        │           │
+│  │  on check-in      │ ──────────────────────────▶          │           │
+│  └───────────────────┘   ◄── 200 OK (signature)   ┌────────▼─────────┐ │
+│                                                    │  Celery Worker   │ │
+│  ┌───────────────────┐                             │  (async signing) │ │
+│  │  CLI / SDK        │ ──────────────────────────▶ └────────┬─────────┘ │
+│  └───────────────────┘                                      │           │
+└─────────────────────────────────────────────────────────────┼───────────┘
+                                                              │
+              ┌───────────────────────────────────────────────┤
+              │                                               │
+     ┌────────▼──────┐   ┌───────────────┐   ┌──────────────▼──────┐
+     │  Certificate  │   │  PostgreSQL   │   │  Redis              │
+     │  Store        │   │  (Audit Logs, │   │  (Celery broker,    │
+     │  local /      │   │   Jobs, Users)│   │   result backend)   │
+     │  Vault / AWS  │   └───────────────┘   └─────────────────────┘
+     │  / Azure KV   │
+     └───────────────┘
+```
+
+### SNOW Synchronous Flow
+
+```
+SNOW Form  ──[POST /api/v1/snow/sign  file + requester_id]──▶  API
+                                                                  │ validate
+                                                                  │ get_or_create_certificate("snow-test-domain")
+                                                                  │ sign (RSA SHA-256)
+           ◄──[200 OK  signed_content_b64 + signature + cert]──  │
+SNOW stores signature in record field
+SNOW later  ──[POST /api/v1/snow/verify  file + signature]──▶  API
+           ◄──[200 OK  is_valid: true/false]──────────────────   │
+```
+
+### CI/CD Check-in Flow
+
+```
+Developer pushes code
+       │
+       ▼
+  Pipeline trigger (on: push / pull_request)
+       │
+       ▼
+  POST /api/v1/sign  ──▶  202 Accepted  { job_id }
+       │
+       ▼
+  Poll GET /api/v1/status/{job_id}  until  status == "completed"
+       │
+       ▼
+  Retrieve signature + file_hash from response
+       │
+       ▼
+  Store / publish signed artifact
 ```
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
 - Docker & Docker Compose
 - Python 3.11+ (for local development)
-- A code-signing certificate (self-signed for dev, CA-issued for production)
+- A code-signing certificate (self-signed generated automatically for dev, CA-issued for production)
 
 ### Quick Start
 
@@ -72,123 +125,177 @@ curl http://localhost:8000/api/v1/health
 ### Local Development
 
 ```bash
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate  # or `venv\Scripts\activate` on Windows
-
-# Install dependencies
+source venv/bin/activate
 pip install -r requirements.txt
-
-# Run the service
 uvicorn src.main:app --reload --port 8000
-
-# Run tests
 make test
 ```
 
+On startup the service automatically generates:
+- `certs/default.pem` — general-purpose dev signing certificate
+- `certs/snow-test-domain.pem` — pre-provisioned certificate for SNOW test-domain signing
+
 ---
 
-## 📡 API Reference
+## API Reference
 
-| Method | Endpoint                  | Description                    |
-|--------|---------------------------|--------------------------------|
-| POST   | `/api/v1/sign`            | Submit a macro file for signing |
-| GET    | `/api/v1/status/{job_id}` | Check signing job status        |
-| POST   | `/api/v1/verify`          | Verify a signed macro           |
-| GET    | `/api/v1/health`          | Health check                    |
+### ServiceNow Integration (Synchronous)
 
-### Example: Sign a Macro
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/snow/sign` | Sign a macro and return signed content **immediately** (200 OK, no polling) |
+| POST | `/api/v1/snow/verify` | Verify a previously signed macro |
+| GET | `/api/v1/snow/certs` | List available certificates in the key store |
+
+### Standard Signing (Asynchronous)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/sign` | Submit a macro for async signing (202 Accepted + job_id) |
+| GET | `/api/v1/status/{job_id}` | Poll signing job status |
+| POST | `/api/v1/verify` | Verify a signed macro |
+| GET | `/api/v1/health` | Health check |
+
+### SNOW Signing Example
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/sign \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -F "file=@my_macro.vba" \
-  -F "profile=production"
+# Sign a macro — response returns signed content immediately
+curl -X POST http://localhost:8000/api/v1/snow/sign \
+  -H "X-API-Key: mss_your_api_key" \
+  -F "file=@report_macro.vba" \
+  -F "requester_id=sys_u_abc123" \
+  -F "algorithm=sha256"
 ```
 
-**Response:**
+**Response (200 OK):**
 ```json
 {
-  "job_id": "abc-123-def",
-  "status": "queued",
-  "message": "Macro submitted for signing"
+  "status": "signed",
+  "original_filename": "report_macro.vba",
+  "file_size": 1024,
+  "signed_content_b64": "QXR0cmlidXRlIFZCX05hbWUg...",
+  "signature": "3045022100abcdef...",
+  "file_hash": "a1b2c3d4...",
+  "certificate_fingerprint": "AB:CD:EF:...",
+  "certificate_subject": "CN=snow-test.macro-sign.local,O=SNOW Test Domain,C=US",
+  "certificate_pem": "-----BEGIN CERTIFICATE-----\n...",
+  "algorithm": "sha256",
+  "signed_at": "2026-02-23T10:00:00Z",
+  "requester_id": "sys_u_abc123",
+  "domain": "snow-test-domain"
 }
 ```
 
+### CI/CD Pipeline Example (GitHub Actions)
+
+```yaml
+- name: Sign VBA macro on check-in
+  env:
+    MACRO_SIGN_URL: ${{ vars.MACRO_SIGN_URL }}
+    MACRO_SIGN_API_KEY: ${{ secrets.MACRO_SIGN_API_KEY }}
+  run: |
+    # Submit signing job
+    JOB_ID=$(curl -sf -X POST "$MACRO_SIGN_URL/api/v1/sign" \
+      -H "X-API-Key: $MACRO_SIGN_API_KEY" \
+      -F "file=@src/macros/report.vba" \
+      | jq -r '.job_id')
+
+    # Poll until complete
+    for i in $(seq 1 30); do
+      RESULT=$(curl -sf "$MACRO_SIGN_URL/api/v1/status/$JOB_ID" \
+        -H "X-API-Key: $MACRO_SIGN_API_KEY")
+      STATUS=$(echo "$RESULT" | jq -r '.status')
+      [ "$STATUS" = "completed" ] && break
+      [ "$STATUS" = "failed" ] && exit 1
+      sleep 2
+    done
+
+    echo "Signature: $(echo $RESULT | jq -r '.signature')"
+```
+
 ---
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 macro-sign-service/
 ├── .github/workflows/      # CI/CD pipelines
 ├── src/
-│   ├── api/                # API routes & controllers
-│   ├── core/               # Signing engine & business logic
-│   ├── auth/               # Authentication & authorization
-│   ├── models/             # Database models
-│   ├── queue/              # Async job processing
-│   ├── utils/              # Helpers & utilities
-│   └── config/             # Configuration management
-├── tests/                  # Unit, integration & e2e tests
-├── dashboard/              # Admin web UI
+│   ├── api/
+│   │   ├── snow.py         # ServiceNow synchronous signing endpoints
+│   │   ├── signing.py      # Async signing endpoints (sign/status/verify)
+│   │   ├── auth.py         # Authentication & API key management
+│   │   ├── admin.py        # Admin: users, teams, profiles, audit
+│   │   ├── health.py       # Health / readiness / liveness probes
+│   │   └── webhooks.py     # Webhook management
+│   ├── core/
+│   │   ├── signing_engine.py     # RSA/ECDSA signing & verification
+│   │   └── certificate_store.py  # Local / Vault / AWS / Azure backends
+│   ├── auth/               # JWT, API keys, RBAC
+│   ├── models/             # SQLAlchemy ORM + Pydantic schemas
+│   ├── queue/              # Celery tasks
+│   ├── utils/              # File validator, rate limiter
+│   └── config/             # Settings, logging
+├── tests/
+│   ├── unit/               # 79 unit tests
+│   └── integration/
+│       └── test_snow_integration.py  # 46 SNOW end-to-end tests
+├── dashboard/              # Admin web UI (Next.js)
 ├── cli/                    # CLI tool
-├── docs/                   # Documentation
+├── docs/                   # API.md, DEPLOYMENT.md
 ├── deploy/                 # Docker & Helm charts
 ├── docker-compose.yml
 ├── Makefile
-├── README.md
-└── LICENSE
+└── DEVELOPER_GUIDE.md
 ```
 
 ---
 
-## 🔒 Security
+## Security
 
-- All signing operations are logged with full audit trails
-- Certificates are never stored on disk — fetched from secure vaults at runtime
-- API authentication via JWT/API keys with RBAC
-- Supports mTLS for service-to-service communication
+- All signing operations are logged with full audit trails (user, IP, file hash, cert fingerprint)
+- Private keys are fetched from secure vaults at runtime — never written to application logs
+- API authentication via JWT bearer tokens and API keys with RBAC
+- Webhook payloads signed with HMAC-SHA256
+- File uploads scanned for dangerous shell patterns before signing
 - Regular security scanning via GitHub Advanced Security
 
 ---
 
-## 🛣️ Roadmap
+## Roadmap
 
-- [x] Project setup & initial architecture
-- [ ] Core signing engine
-- [ ] REST API with authentication
-- [ ] Certificate store integration (Vault/KMS)
-- [ ] CI/CD plugins (GitHub Actions, Azure DevOps)
-- [ ] Admin dashboard
-- [ ] CLI tool
-- [ ] Kubernetes deployment (Helm charts)
-- [ ] Multi-tenant support
-
-See [PLAN.md](PLAN.md) for the detailed project plan.
+- [x] Core signing engine (RSA/ECDSA, SHA-256/384/512)
+- [x] REST API with JWT + API key authentication
+- [x] Async signing via Celery workers
+- [x] Certificate store integration (Local, HashiCorp Vault, AWS KMS, Azure Key Vault)
+- [x] ServiceNow synchronous signing integration (`/snow/sign`)
+- [x] CI/CD pipeline integration (GitHub Actions, Azure DevOps, Jenkins)
+- [x] Admin dashboard (Next.js)
+- [x] CLI tool
+- [x] Kubernetes deployment (Helm charts)
+- [ ] Bulk signing API (batch multiple files in one request)
+- [ ] Distributed rate limiting (Redis-backed)
+- [ ] Certificate expiry alerts
+- [ ] HSM / PKCS#11 support
 
 ---
 
-## 🤝 Contributing
-
-Contributions are welcome! Please read our contributing guidelines before submitting a PR.
+## Contributing
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+3. Commit your changes
+4. Push to the branch and open a Pull Request
 
 ---
 
-## 📄 License
+## License
 
-This project is licensed under the Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
+Apache License 2.0 — see the [LICENSE](LICENSE) file for details.
 
 ---
 
-## 📬 Contact
+**Ojas K / Raghu Veerapandiyan** — [@ojask7](https://github.com/ojask7)
 
-**Ojas K** — [@ojask7](https://github.com/ojask7)
-
-Project Link: [https://github.com/ojask7/macro-sign-service](https://github.com/ojask7/macro-sign-service)
+Project: [https://github.com/ojask7/macro-sign-service](https://github.com/ojask7/macro-sign-service)
