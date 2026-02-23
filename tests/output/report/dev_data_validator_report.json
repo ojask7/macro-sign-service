@@ -1,0 +1,42 @@
+{
+  "generated_at": "2026-02-23T17:23:34.272349+00:00",
+  "environment": "dev",
+  "input": {
+    "filename": "dev_data_validator.bas",
+    "size_bytes": 2277,
+    "sha256": "3d9c2ca0516552386d492e497befa94c35153c4a1dc52bf0b6f025320530bb4a",
+    "path": "/mnt/c/Users/rveerapandiyan/Projects/macro-sign-service/tests/input/dev_data_validator.bas"
+  },
+  "signing": {
+    "domain": "dev-signing",
+    "algorithm": "sha256",
+    "signed_at": "2026-02-23T17:23:34.181031Z",
+    "signature": "25d3d87fcf9339fcd38c85777760c7ea0304a05588bb407fb5e250816a3d08e2c5beb388f242061b81bb1099c504c8930f78718b42960d821f6b800de2fbb0c1d5ea6385ccf8c31dbfcdf8a4dcb648dcfec61b63ed6fdcde11fb2325b03eaa19d2e071eea9a78bcbd93826b99609bb265edd07ad548ec69453140f5103a7bb4829ad7ac5f5d6881ff81ac721be340691d8e180296025c422ca82b5da901512b1b7ce3f80cba8106747eb57ded1249bdf75847f893fc35100581e6b6c2df65ac923ecb4d187c90a9b434a9956e892a902cd29bd4ec23915445c2f5300f1e308432829510a845c112f75919981ceca00def74c1f932a6ba4d8defabd6a15db3e6d",
+    "file_hash": "3d9c2ca0516552386d492e497befa94c35153c4a1dc52bf0b6f025320530bb4a",
+    "cert_fingerprint": "9845bad52c28e4602b791474b190ef1bbc8c28e6495fc278d8c8cbe68299f10a"
+  },
+  "certificate": {
+    "subject": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "issuer": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "serial": "219215904450327731832665619675762765329660514666",
+    "not_valid_before": "2026-02-23T17:19:17+00:00",
+    "not_valid_after": "2027-02-23T17:19:17+00:00",
+    "fingerprint_sha256": "98:45:BA:D5:2C:28:E4:60:2B:79:14:74:B1:90:EF:1B:BC:8C:28:E6:49:5F:C2:78:D8:C8:CB:E6:82:99:F1:0A",
+    "key_type": "RSA-2048",
+    "subject_from_api": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "pem_snippet": "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIUJmX7Kzq5us5cwd4WLNT3LkvyEWowDQYJKoZIhvcNAQEL\nBQAwTTEjMCEGA1UEAwwac25vdy10ZXN0Lm1hY3JvLXNpZ24ubG9jYWwxGTAXBgNV\nBAoMEFNOT1cgVGVzdCBEb21haW4xCzAJBgNVBAYTAl\u2026"
+  },
+  "output": {
+    "filename": "dev_data_validator_signed.bas",
+    "size_bytes": 2277,
+    "sha256": "3d9c2ca0516552386d492e497befa94c35153c4a1dc52bf0b6f025320530bb4a",
+    "path": "/mnt/c/Users/rveerapandiyan/Projects/macro-sign-service/tests/output/dev_data_validator_signed.bas"
+  },
+  "verification": {
+    "api_valid": true,
+    "local_valid": true,
+    "message": "Signature is valid",
+    "cert_subject": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "cert_expiry": "2027-02-23T17:19:17Z"
+  }
+}

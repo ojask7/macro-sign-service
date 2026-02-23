@@ -1,0 +1,36 @@
+======================================================================
+  MACRO SIGNING REPORT
+======================================================================
+
+─── INPUT FILE ───────────────────────────────────────────────────────
+  File name   : prod_monthly_close.vba
+  File size   : 3,171 bytes
+  SHA-256     : 15befadca2a29d61efc0fd18037dfd9bef20a587cbdc8152d2abf76a99dde585
+  Environment : prod
+
+─── SIGNING ──────────────────────────────────────────────────────────
+  Domain      : prod-signing
+  Algorithm   : sha256
+  Signed at   : 2026-02-23T17:23:34.628670Z
+  Signature   : 066066d4a8ba576ce1b50607b09e4f3a8ee1175d1155459eb3185a1a453f1ecf…
+  File hash   : 15befadca2a29d61efc0fd18037dfd9bef20a587cbdc8152d2abf76a99dde585
+
+─── CERTIFICATE (PRIVATE KEY USED FOR SIGNING) ───────────────────────
+  Subject     : C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local
+  Issuer      : C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local
+  Key type    : RSA-2048
+  Valid from  : 2026-02-23T17:19:17+00:00
+  Valid until : 2027-02-23T17:19:17+00:00
+  Fingerprint : EB:B6:BC:C7:C7:DB:CA:EF:31:10:E8:CE:AA:61:35:EF:0E:11:2C:E3:92:0F:83:53:03:3B:3C:E9:B7:EB:15:91
+
+─── OUTPUT FILE ──────────────────────────────────────────────────────
+  File name   : prod_monthly_close_signed.vba
+  File size   : 3,171 bytes
+  SHA-256     : 15befadca2a29d61efc0fd18037dfd9bef20a587cbdc8152d2abf76a99dde585
+
+─── VERIFICATION (PUBLIC KEY) ────────────────────────────────────────
+  API result  : ✓ VALID
+  Local check : ✓ VALID
+  Message     : Signature is valid
+
+======================================================================

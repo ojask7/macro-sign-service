@@ -1,0 +1,36 @@
+======================================================================
+  MACRO SIGNING REPORT
+======================================================================
+
+─── INPUT FILE ───────────────────────────────────────────────────────
+  File name   : prod_invoice_automation.cls
+  File size   : 3,036 bytes
+  SHA-256     : 540488352f1432ce811efa0258caeb12a191f0a59262b8412eee5d030f77c85a
+  Environment : prod
+
+─── SIGNING ──────────────────────────────────────────────────────────
+  Domain      : prod-signing
+  Algorithm   : sha256
+  Signed at   : 2026-02-23T17:23:34.498099Z
+  Signature   : 22a420261d395b5b1d8419c55eb0e6a075d0d8a9bce7f771364ae1e1a4fa0863…
+  File hash   : 540488352f1432ce811efa0258caeb12a191f0a59262b8412eee5d030f77c85a
+
+─── CERTIFICATE (PRIVATE KEY USED FOR SIGNING) ───────────────────────
+  Subject     : C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local
+  Issuer      : C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local
+  Key type    : RSA-2048
+  Valid from  : 2026-02-23T17:19:17+00:00
+  Valid until : 2027-02-23T17:19:17+00:00
+  Fingerprint : EB:B6:BC:C7:C7:DB:CA:EF:31:10:E8:CE:AA:61:35:EF:0E:11:2C:E3:92:0F:83:53:03:3B:3C:E9:B7:EB:15:91
+
+─── OUTPUT FILE ──────────────────────────────────────────────────────
+  File name   : prod_invoice_automation_signed.cls
+  File size   : 3,036 bytes
+  SHA-256     : 540488352f1432ce811efa0258caeb12a191f0a59262b8412eee5d030f77c85a
+
+─── VERIFICATION (PUBLIC KEY) ────────────────────────────────────────
+  API result  : ✓ VALID
+  Local check : ✓ VALID
+  Message     : Signature is valid
+
+======================================================================

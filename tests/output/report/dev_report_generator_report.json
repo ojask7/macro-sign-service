@@ -1,0 +1,42 @@
+{
+  "generated_at": "2026-02-23T17:23:34.417590+00:00",
+  "environment": "dev",
+  "input": {
+    "filename": "dev_report_generator.vba",
+    "size_bytes": 2228,
+    "sha256": "10993ec27dd16add5c77fad6162883028ab1460a6aa4c27fd9437914006c3bef",
+    "path": "/mnt/c/Users/rveerapandiyan/Projects/macro-sign-service/tests/input/dev_report_generator.vba"
+  },
+  "signing": {
+    "domain": "dev-signing",
+    "algorithm": "sha256",
+    "signed_at": "2026-02-23T17:23:34.360674Z",
+    "signature": "02068f65781f6e02d234fb698b26ed28cd4ea5126ba6fb2ae7e8b5f2d83f5572f766e6a0fec7ae7e203a0869be79044b2ed721730a08386c27863f5b691fb7dce88feca67f1dc2677a1bcf54ab26909040e989aceafae81e6b39c440301c2f86aeff2403855d6e361bc14ef543190dc8baaa47300eee6fcb6f6e8602b9b43dfa56425004bc99602a100b003d28f784f7560b627e20c2b6edcc7d7d0de2c72b5bb555cb11b14ced6c6dfb4d0c1d9e1a6ca9345974864fead3867b2f19fdd4182c2b8f06d1e23728096f4b8daabff0e320f825966ea9f2f25e83ff5ce8fe0ea7567a9830b6dab82bdc1960513a327309b3c1bd1b76f88a4c3b2f3ae30bf556724c",
+    "file_hash": "10993ec27dd16add5c77fad6162883028ab1460a6aa4c27fd9437914006c3bef",
+    "cert_fingerprint": "9845bad52c28e4602b791474b190ef1bbc8c28e6495fc278d8c8cbe68299f10a"
+  },
+  "certificate": {
+    "subject": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "issuer": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "serial": "219215904450327731832665619675762765329660514666",
+    "not_valid_before": "2026-02-23T17:19:17+00:00",
+    "not_valid_after": "2027-02-23T17:19:17+00:00",
+    "fingerprint_sha256": "98:45:BA:D5:2C:28:E4:60:2B:79:14:74:B1:90:EF:1B:BC:8C:28:E6:49:5F:C2:78:D8:C8:CB:E6:82:99:F1:0A",
+    "key_type": "RSA-2048",
+    "subject_from_api": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "pem_snippet": "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIUJmX7Kzq5us5cwd4WLNT3LkvyEWowDQYJKoZIhvcNAQEL\nBQAwTTEjMCEGA1UEAwwac25vdy10ZXN0Lm1hY3JvLXNpZ24ubG9jYWwxGTAXBgNV\nBAoMEFNOT1cgVGVzdCBEb21haW4xCzAJBgNVBAYTAl\u2026"
+  },
+  "output": {
+    "filename": "dev_report_generator_signed.vba",
+    "size_bytes": 2228,
+    "sha256": "10993ec27dd16add5c77fad6162883028ab1460a6aa4c27fd9437914006c3bef",
+    "path": "/mnt/c/Users/rveerapandiyan/Projects/macro-sign-service/tests/output/dev_report_generator_signed.vba"
+  },
+  "verification": {
+    "api_valid": true,
+    "local_valid": true,
+    "message": "Signature is valid",
+    "cert_subject": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "cert_expiry": "2027-02-23T17:19:17Z"
+  }
+}

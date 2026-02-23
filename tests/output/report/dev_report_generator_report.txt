@@ -1,0 +1,36 @@
+======================================================================
+  MACRO SIGNING REPORT
+======================================================================
+
+─── INPUT FILE ───────────────────────────────────────────────────────
+  File name   : dev_report_generator.vba
+  File size   : 2,228 bytes
+  SHA-256     : 10993ec27dd16add5c77fad6162883028ab1460a6aa4c27fd9437914006c3bef
+  Environment : dev
+
+─── SIGNING ──────────────────────────────────────────────────────────
+  Domain      : dev-signing
+  Algorithm   : sha256
+  Signed at   : 2026-02-23T17:23:34.360674Z
+  Signature   : 02068f65781f6e02d234fb698b26ed28cd4ea5126ba6fb2ae7e8b5f2d83f5572…
+  File hash   : 10993ec27dd16add5c77fad6162883028ab1460a6aa4c27fd9437914006c3bef
+
+─── CERTIFICATE (PRIVATE KEY USED FOR SIGNING) ───────────────────────
+  Subject     : C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local
+  Issuer      : C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local
+  Key type    : RSA-2048
+  Valid from  : 2026-02-23T17:19:17+00:00
+  Valid until : 2027-02-23T17:19:17+00:00
+  Fingerprint : 98:45:BA:D5:2C:28:E4:60:2B:79:14:74:B1:90:EF:1B:BC:8C:28:E6:49:5F:C2:78:D8:C8:CB:E6:82:99:F1:0A
+
+─── OUTPUT FILE ──────────────────────────────────────────────────────
+  File name   : dev_report_generator_signed.vba
+  File size   : 2,228 bytes
+  SHA-256     : 10993ec27dd16add5c77fad6162883028ab1460a6aa4c27fd9437914006c3bef
+
+─── VERIFICATION (PUBLIC KEY) ────────────────────────────────────────
+  API result  : ✓ VALID
+  Local check : ✓ VALID
+  Message     : Signature is valid
+
+======================================================================

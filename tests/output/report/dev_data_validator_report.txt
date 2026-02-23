@@ -1,0 +1,36 @@
+======================================================================
+  MACRO SIGNING REPORT
+======================================================================
+
+─── INPUT FILE ───────────────────────────────────────────────────────
+  File name   : dev_data_validator.bas
+  File size   : 2,277 bytes
+  SHA-256     : 3d9c2ca0516552386d492e497befa94c35153c4a1dc52bf0b6f025320530bb4a
+  Environment : dev
+
+─── SIGNING ──────────────────────────────────────────────────────────
+  Domain      : dev-signing
+  Algorithm   : sha256
+  Signed at   : 2026-02-23T17:23:34.181031Z
+  Signature   : 25d3d87fcf9339fcd38c85777760c7ea0304a05588bb407fb5e250816a3d08e2…
+  File hash   : 3d9c2ca0516552386d492e497befa94c35153c4a1dc52bf0b6f025320530bb4a
+
+─── CERTIFICATE (PRIVATE KEY USED FOR SIGNING) ───────────────────────
+  Subject     : C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local
+  Issuer      : C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local
+  Key type    : RSA-2048
+  Valid from  : 2026-02-23T17:19:17+00:00
+  Valid until : 2027-02-23T17:19:17+00:00
+  Fingerprint : 98:45:BA:D5:2C:28:E4:60:2B:79:14:74:B1:90:EF:1B:BC:8C:28:E6:49:5F:C2:78:D8:C8:CB:E6:82:99:F1:0A
+
+─── OUTPUT FILE ──────────────────────────────────────────────────────
+  File name   : dev_data_validator_signed.bas
+  File size   : 2,277 bytes
+  SHA-256     : 3d9c2ca0516552386d492e497befa94c35153c4a1dc52bf0b6f025320530bb4a
+
+─── VERIFICATION (PUBLIC KEY) ────────────────────────────────────────
+  API result  : ✓ VALID
+  Local check : ✓ VALID
+  Message     : Signature is valid
+
+======================================================================

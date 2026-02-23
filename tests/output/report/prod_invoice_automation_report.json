@@ -1,0 +1,42 @@
+{
+  "generated_at": "2026-02-23T17:23:34.554310+00:00",
+  "environment": "prod",
+  "input": {
+    "filename": "prod_invoice_automation.cls",
+    "size_bytes": 3036,
+    "sha256": "540488352f1432ce811efa0258caeb12a191f0a59262b8412eee5d030f77c85a",
+    "path": "/mnt/c/Users/rveerapandiyan/Projects/macro-sign-service/tests/input/prod_invoice_automation.cls"
+  },
+  "signing": {
+    "domain": "prod-signing",
+    "algorithm": "sha256",
+    "signed_at": "2026-02-23T17:23:34.498099Z",
+    "signature": "22a420261d395b5b1d8419c55eb0e6a075d0d8a9bce7f771364ae1e1a4fa086371ea9aa362b6873b40cf85465f28c428b08fd3eed29fc1ea17410662801a3f3f11820eb507c6057c6152ed4a817f1ab9da68e1666e285ce68ceb5a99f2a10d8c731d5384513e131a62a492baf4bfb4c5378c342cd35aacc6fe6aff8b68c37358972f1a0211ffa3938407c44bbb0b982ed4d2567085968bf0844d3c9b6b74a4fea29bb633f30bc8625b675b5303239bc13e0aff30e0aec8eb4142940357e4395daf8da032542a19d810619b0ff369f3069283966ee49c16766011406d924ff9762afbec08887b03cf788705059973d5b8f6b01a2f83102385f05409db095d295a",
+    "file_hash": "540488352f1432ce811efa0258caeb12a191f0a59262b8412eee5d030f77c85a",
+    "cert_fingerprint": "ebb6bcc7c7dbcaef3110e8ceaa6135ef0e112ce3920f8353033b3ce9b7eb1591"
+  },
+  "certificate": {
+    "subject": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "issuer": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "serial": "258343161140246123795146084838021786075622386362",
+    "not_valid_before": "2026-02-23T17:19:17+00:00",
+    "not_valid_after": "2027-02-23T17:19:17+00:00",
+    "fingerprint_sha256": "EB:B6:BC:C7:C7:DB:CA:EF:31:10:E8:CE:AA:61:35:EF:0E:11:2C:E3:92:0F:83:53:03:3B:3C:E9:B7:EB:15:91",
+    "key_type": "RSA-2048",
+    "subject_from_api": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "pem_snippet": "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIULUCCDDwdsVmWKK3KbmeCaApdqrowDQYJKoZIhvcNAQEL\nBQAwTTEjMCEGA1UEAwwac25vdy10ZXN0Lm1hY3JvLXNpZ24ubG9jYWwxGTAXBgNV\nBAoMEFNOT1cgVGVzdCBEb21haW4xCzAJBgNVBAYTAl\u2026"
+  },
+  "output": {
+    "filename": "prod_invoice_automation_signed.cls",
+    "size_bytes": 3036,
+    "sha256": "540488352f1432ce811efa0258caeb12a191f0a59262b8412eee5d030f77c85a",
+    "path": "/mnt/c/Users/rveerapandiyan/Projects/macro-sign-service/tests/output/prod_invoice_automation_signed.cls"
+  },
+  "verification": {
+    "api_valid": true,
+    "local_valid": true,
+    "message": "Signature is valid",
+    "cert_subject": "C=US,O=SNOW Test Domain,CN=snow-test.macro-sign.local",
+    "cert_expiry": "2027-02-23T17:19:17Z"
+  }
+}
