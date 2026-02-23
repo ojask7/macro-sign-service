@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Database initialization skipped", error=str(e))
 
-    # Generate dev certificate if needed
+    # Generate dev certificates if needed
     if not settings.app.is_production:
         try:
             from pathlib import Path
@@ -49,14 +49,27 @@ async def lifespan(app: FastAPI):
             cert_dir = Path("./certs")
             cert_dir.mkdir(parents=True, exist_ok=True)
 
+            # Default signing certificate
             cert_path = cert_dir / "default.pem"
             key_path = cert_dir / "default.key"
-
             if not cert_path.exists():
                 cert_pem, key_pem = create_self_signed_cert()
                 cert_path.write_bytes(cert_pem)
                 key_path.write_bytes(key_pem)
                 logger.info("Development self-signed certificate generated")
+
+            # SNOW test-domain certificate (auto-provisioned for ServiceNow integration)
+            snow_cert_path = cert_dir / "snow-test-domain.pem"
+            snow_key_path = cert_dir / "snow-test-domain.key"
+            if not snow_cert_path.exists():
+                snow_cert_pem, snow_key_pem = create_self_signed_cert(
+                    common_name="snow-test.macro-sign.local",
+                    organization="SNOW Test Domain",
+                    days_valid=365,
+                )
+                snow_cert_path.write_bytes(snow_cert_pem)
+                snow_key_path.write_bytes(snow_key_pem)
+                logger.info("SNOW test-domain certificate generated")
         except Exception as e:
             logger.warning("Failed to generate dev certificate", error=str(e))
 
@@ -157,6 +170,7 @@ def create_app() -> FastAPI:
     from src.api.health import router as health_router
     from src.api.signing import router as signing_router
     from src.api.signing import router_status, router_verify
+    from src.api.snow import router as snow_router
     from src.api.webhooks import router as webhooks_router
 
     api_prefix = "/api/v1"
@@ -166,6 +180,7 @@ def create_app() -> FastAPI:
     app.include_router(signing_router, prefix=api_prefix)
     app.include_router(router_status, prefix=api_prefix)
     app.include_router(router_verify, prefix=api_prefix)
+    app.include_router(snow_router, prefix=api_prefix)
     app.include_router(webhooks_router, prefix=api_prefix)
     app.include_router(router_users, prefix=api_prefix)
     app.include_router(router_teams, prefix=api_prefix)

@@ -326,6 +326,43 @@ class WebhookUpdate(BaseModel):
 
 
 # ============================================================================
+# ServiceNow (SNOW) Integration Schemas
+# ============================================================================
+
+
+class SNOWSignResponse(BaseModel):
+    """
+    Response returned directly to the ServiceNow form after synchronous signing.
+    Contains the signed content (base64), signature, and certificate details.
+    """
+
+    status: str  # "signed"
+    original_filename: str
+    file_size: int
+    signed_content_b64: str  # base64-encoded original file content
+    signature: str  # hex-encoded digital signature
+    file_hash: str  # hex SHA-256/384/512 hash of the file
+    certificate_fingerprint: str  # SHA-256 fingerprint of signing cert
+    certificate_subject: str  # X.509 subject (CN=..., O=..., C=...)
+    certificate_pem: str  # PEM-encoded public cert for client-side verification
+    algorithm: str  # hash algorithm used
+    signed_at: datetime
+    requester_id: Optional[str] = None  # ServiceNow sys_id of the requesting user
+    domain: str  # certificate domain/name used for signing
+
+
+class SNOWVerifyResponse(BaseModel):
+    """Response from SNOW signature verification endpoint."""
+
+    is_valid: bool
+    certificate_subject: Optional[str] = None
+    certificate_issuer: Optional[str] = None
+    certificate_expiry: Optional[datetime] = None
+    message: str
+    domain: Optional[str] = None
+
+
+# ============================================================================
 # Analytics Schemas
 # ============================================================================
 

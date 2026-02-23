@@ -76,6 +76,44 @@ class BaseCertificateStore(abc.ABC):
         """Rotate (replace) a certificate."""
         ...
 
+    async def get_or_create_certificate(
+        self,
+        name: str,
+        *,
+        common_name: str,
+        organization: str = "Macro Sign Service",
+        days_valid: int = 365,
+    ) -> CertificateInfo:
+        """
+        Retrieve a certificate by name, or auto-create a self-signed one if absent.
+
+        This is the idempotent provisioning method used by the SNOW integration to
+        ensure the test-domain certificate always exists without manual setup.
+        """
+        try:
+            return await self.get_certificate(name)
+        except CertificateStoreError:
+            from src.core.signing_engine import create_self_signed_cert
+
+            cert_pem, key_pem = create_self_signed_cert(
+                common_name=common_name,
+                organization=organization,
+                days_valid=days_valid,
+            )
+            metadata: dict[str, Any] = {
+                "common_name": common_name,
+                "organization": organization,
+                "auto_generated": True,
+                "purpose": "test",
+            }
+            await self.store_certificate(name, cert_pem, key_pem, metadata)
+            logger.info(
+                "Auto-created certificate for key store",
+                name=name,
+                common_name=common_name,
+            )
+            return await self.get_certificate(name)
+
 
 class LocalCertificateStore(BaseCertificateStore):
     """
@@ -401,6 +439,139 @@ class AWSKMSCertificateStore(BaseCertificateStore):
         logger.info("Certificate rotated in AWS", name=name)
 
 
+class AzureKeyVaultCertificateStore(BaseCertificateStore):
+    """
+    Azure Key Vault certificate store.
+    Uses Azure Key Vault Secrets to store PEM-encoded certificates and private keys.
+    Supports DefaultAzureCredential (managed identity, env vars, CLI login).
+    """
+
+    def __init__(self) -> None:
+        settings = get_settings()
+        self.vault_url = settings.azure.keyvault_url
+        if not self.vault_url:
+            raise CertificateStoreError(
+                "AZURE_KEYVAULT_URL environment variable is required for Azure Key Vault backend"
+            )
+        self._client = None
+        logger.info("Azure Key Vault certificate store initialized", url=self.vault_url)
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            try:
+                from azure.identity import (
+                    ClientSecretCredential,
+                    DefaultAzureCredential,
+                )
+                from azure.keyvault.secrets import SecretClient
+
+                settings = get_settings()
+                # Use explicit service-principal creds if provided, else DefaultAzureCredential
+                if settings.azure.tenant_id and settings.azure.client_id and settings.azure.client_secret:
+                    credential = ClientSecretCredential(
+                        tenant_id=settings.azure.tenant_id,
+                        client_id=settings.azure.client_id,
+                        client_secret=settings.azure.client_secret,
+                    )
+                else:
+                    credential = DefaultAzureCredential()
+
+                self._client = SecretClient(
+                    vault_url=self.vault_url, credential=credential
+                )
+            except ImportError:
+                raise CertificateStoreError(
+                    "azure-keyvault-secrets and azure-identity packages are required. "
+                    "Install with: pip install azure-keyvault-secrets azure-identity"
+                )
+        return self._client
+
+    @staticmethod
+    def _secret_name(name: str) -> str:
+        """Convert certificate name to a valid Azure Key Vault secret name (no dots/slashes)."""
+        return "macro-sign-" + name.replace(".", "-").replace("/", "-").replace("_", "-")
+
+    async def get_certificate(self, name: str) -> CertificateInfo:
+        import json
+
+        client = self._get_client()
+        secret_name = self._secret_name(name)
+        try:
+            secret = client.get_secret(secret_name)
+            data = json.loads(secret.value)
+            return CertificateInfo(
+                name=name,
+                certificate_pem=data["certificate"].encode(),
+                private_key_pem=(
+                    data["private_key"].encode() if data.get("private_key") else None
+                ),
+                metadata=data.get("metadata", {}),
+            )
+        except Exception as e:
+            raise CertificateStoreError(
+                f"Failed to retrieve certificate '{name}' from Azure Key Vault: {e}"
+            ) from e
+
+    async def store_certificate(
+        self,
+        name: str,
+        certificate_pem: bytes,
+        private_key_pem: Optional[bytes] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> None:
+        import json
+
+        client = self._get_client()
+        secret_name = self._secret_name(name)
+        data: dict[str, Any] = {"certificate": certificate_pem.decode()}
+        if private_key_pem:
+            data["private_key"] = private_key_pem.decode()
+        if metadata:
+            data["metadata"] = metadata
+        try:
+            client.set_secret(secret_name, json.dumps(data))
+            logger.info("Certificate stored in Azure Key Vault", name=name)
+        except Exception as e:
+            raise CertificateStoreError(
+                f"Failed to store certificate '{name}' in Azure Key Vault: {e}"
+            ) from e
+
+    async def list_certificates(self) -> list[str]:
+        client = self._get_client()
+        prefix = "macro-sign-"
+        try:
+            return [
+                props.name[len(prefix):]
+                for props in client.list_properties_of_secrets()
+                if props.name.startswith(prefix) and props.enabled
+            ]
+        except Exception as e:
+            raise CertificateStoreError(
+                f"Failed to list certificates from Azure Key Vault: {e}"
+            ) from e
+
+    async def delete_certificate(self, name: str) -> None:
+        client = self._get_client()
+        secret_name = self._secret_name(name)
+        try:
+            client.begin_delete_secret(secret_name).result()
+            logger.info("Certificate deleted from Azure Key Vault", name=name)
+        except Exception as e:
+            raise CertificateStoreError(
+                f"Failed to delete certificate '{name}' from Azure Key Vault: {e}"
+            ) from e
+
+    async def rotate_certificate(
+        self,
+        name: str,
+        new_certificate_pem: bytes,
+        new_private_key_pem: Optional[bytes] = None,
+    ) -> None:
+        # Azure Key Vault retains all previous versions automatically
+        await self.store_certificate(name, new_certificate_pem, new_private_key_pem)
+        logger.info("Certificate rotated in Azure Key Vault", name=name)
+
+
 def get_certificate_store() -> BaseCertificateStore:
     """Factory function to get the appropriate certificate store backend."""
     settings = get_settings()
@@ -413,7 +584,6 @@ def get_certificate_store() -> BaseCertificateStore:
     elif backend == CertStoreBackend.AWS_KMS:
         return AWSKMSCertificateStore()
     elif backend == CertStoreBackend.AZURE_KEYVAULT:
-        # Azure Key Vault implementation would go here
-        raise NotImplementedError("Azure Key Vault support coming soon")
+        return AzureKeyVaultCertificateStore()
     else:
         raise CertificateStoreError(f"Unknown certificate store backend: {backend}")
