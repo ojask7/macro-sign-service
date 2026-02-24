@@ -63,42 +63,7 @@ Both paths use the same signing engine, the same certificate key store, and the 
 
 ### System Architecture
 
-```
-┌──────────────────────────────────────────────────────────────────────────┐
-│  CONSUMERS                                                               │
-│                                                                          │
-│  ┌──────────────────────┐     POST /api/v1/snow/sign                    │
-│  │  ServiceNow (SNOW)   │ ──────────────────────────────────────┐       │
-│  │  • Form UI           │  ◄── 200 OK                           │       │
-│  │  • Business Rule     │       signed_content_b64              │       │
-│  │  • Script Include    │       signature                       │       │
-│  │  • Flow Designer     │       certificate_pem                 │       │
-│  └──────────────────────┘                                       │       │
-│                                                                  ▼       │
-│  ┌──────────────────────┐     POST /api/v1/sign          ┌─────────────┐│
-│  │  CI/CD Pipeline      │ ──────────────────────────────▶│  FastAPI    ││
-│  │  • GitHub Actions    │  ◄── 202 Accepted (job_id)     │  API Server ││
-│  │  • Azure DevOps      │                                │  :8000      ││
-│  │  • Jenkins           │     GET /api/v1/status/{id}    └──────┬──────┘│
-│  │  on: push / PR       │ ──────────────────────────────▶       │       │
-│  └──────────────────────┘  ◄── 200 OK (signature)        ┌──────▼──────┐│
-│                                                           │  Celery     ││
-│  ┌──────────────────────┐                                │  Worker     ││
-│  │  CLI / SDK           │ ──────────────────────────────▶│  (async)    ││
-│  └──────────────────────┘                                └──────┬──────┘│
-└─────────────────────────────────────────────────────────────────┼───────┘
-                                                                  │
-                   ┌──────────────────────────────────────────────┤
-                   │                          │                   │
-          ┌────────▼────────┐   ┌─────────────▼──────┐  ┌────────▼───────┐
-          │  Certificate    │   │  PostgreSQL         │  │  Redis         │
-          │  Key Store      │   │  • signing_jobs     │  │  Celery broker │
-          │  • Local FS     │   │  • users / teams    │  │  result store  │
-          │  • Vault        │   │  • audit_logs       │  └────────────────┘
-          │  • AWS KMS      │   │  • api_keys         │
-          │  • Azure KV     │   └────────────────────┘
-          └─────────────────┘
-```
+![Architecture](docs/architecture.svg)
 
 ---
 
