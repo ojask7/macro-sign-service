@@ -26,40 +26,7 @@ Organizations that use Office macros face a constant challenge: **unsigned macro
 
 The service supports two distinct consumer patterns: **ServiceNow GUI** (synchronous, returns signed content directly) and **CI/CD pipelines** (asynchronous, job-based).
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│  CONSUMERS                                                              │
-│                                                                         │
-│  ┌───────────────────┐   POST /api/v1/snow/sign                        │
-│  │  ServiceNow (SNOW)│ ─────────────────────────────────┐              │
-│  │  Form / Business  │   ◄── 200 OK (signed_content_b64,│              │
-│  │  Rule / Script    │        signature, cert_pem)       │              │
-│  │  Include          │                                   │              │
-│  └───────────────────┘                                   │              │
-│                                                          ▼              │
-│  ┌───────────────────┐   POST /api/v1/sign        ┌──────────────────┐ │
-│  │  CI/CD Pipeline   │ ──────────────────────────▶│  FastAPI API     │ │
-│  │  (GitHub Actions, │   ◄── 202 Accepted (job_id) │  (uvicorn:8000)  │ │
-│  │  Azure DevOps,    │                             └────────┬─────────┘ │
-│  │  Jenkins)         │   GET /api/v1/status/{job_id}        │           │
-│  │  on check-in      │ ──────────────────────────▶          │           │
-│  └───────────────────┘   ◄── 200 OK (signature)   ┌────────▼─────────┐ │
-│                                                    │  Celery Worker   │ │
-│  ┌───────────────────┐                             │  (async signing) │ │
-│  │  CLI / SDK        │ ──────────────────────────▶ └────────┬─────────┘ │
-│  └───────────────────┘                                      │           │
-└─────────────────────────────────────────────────────────────┼───────────┘
-                                                              │
-              ┌───────────────────────────────────────────────┤
-              │                                               │
-     ┌────────▼──────┐   ┌───────────────┐   ┌──────────────▼──────┐
-     │  Certificate  │   │  PostgreSQL   │   │  Redis              │
-     │  Store        │   │  (Audit Logs, │   │  (Celery broker,    │
-     │  local /      │   │   Jobs, Users)│   │   result backend)   │
-     │  Vault / AWS  │   └───────────────┘   └─────────────────────┘
-     │  / Azure KV   │
-     └───────────────┘
-```
+![Architecture](docs/architecture.svg)
 
 ### SNOW Synchronous Flow
 
