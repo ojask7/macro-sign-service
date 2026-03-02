@@ -89,6 +89,34 @@ docker-compose up -d
 curl http://localhost:8000/api/v1/health
 ```
 
+### Running Services
+
+Once `docker-compose up -d` completes, the following services are available:
+
+| Service | URL | Description |
+|---------|-----|-------------|
+| **API** | [http://localhost:8000](http://localhost:8000) | REST API server |
+| **Swagger UI** | [http://localhost:8000/api/docs](http://localhost:8000/api/docs) | Interactive API documentation |
+| **Dashboard** | [http://localhost:3000](http://localhost:3000) | Admin web UI (certificates, audit logs, stats) |
+| **SNOW Mock** | [http://localhost:3000/snow-mock](http://localhost:3000/snow-mock) | ServiceNow mock signing form for demos |
+| **Grafana** | [http://localhost:3001](http://localhost:3001) | Monitoring dashboards (admin / admin) |
+| **Prometheus** | [http://localhost:9090](http://localhost:9090) | Metrics collection UI |
+
+### ServiceNow Mock Demo
+
+The built-in ServiceNow mock page at **[http://localhost:3000/snow-mock](http://localhost:3000/snow-mock)** provides a realistic SNOW-styled interface for demonstrating the signing workflow without a live ServiceNow instance.
+
+**How to use it:**
+
+1. Open [http://localhost:3000/snow-mock](http://localhost:3000/snow-mock) in your browser
+2. Log in with your MSS credentials (or register via the API)
+3. Upload a VBA macro file (`.vba`, `.bas`, `.cls`, `.frm`, `.vbs` — max 50 MB)
+4. Select a hash algorithm (SHA-256 / SHA-384 / SHA-512) and signing domain
+5. Click **Sign** — the signed content is returned immediately (synchronous flow)
+6. Download the signed file and review the signing details (hash, signature, certificate info)
+
+The mock form calls the real `/api/v1/snow/sign` endpoint, so it exercises the full signing pipeline.
+
 ### Local Development
 
 ```bash
@@ -209,6 +237,7 @@ macro-sign-service/
 │   └── integration/
 │       └── test_snow_integration.py  # 46 SNOW end-to-end tests
 ├── dashboard/              # Admin web UI (Next.js)
+│   └── app/snow-mock/      # ServiceNow mock signing form
 ├── cli/                    # CLI tool
 ├── docs/                   # API.md, DEPLOYMENT.md
 ├── deploy/                 # Docker & Helm charts
