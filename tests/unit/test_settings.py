@@ -48,6 +48,9 @@ class TestSigningSettings:
         assert ".vba" in extensions
         assert ".bas" in extensions
         assert ".cls" in extensions
+        assert ".xlsm" in extensions
+        assert ".pptm" in extensions
+        assert ".docm" in extensions
 
     def test_max_file_size_bytes(self):
         settings = SigningSettings(max_file_size_mb=50)

@@ -12,6 +12,11 @@ type SignResult = {
   file_hash: string;
   certificate_fingerprint: string;
   certificate_subject: string;
+  certificate_issuer: string;
+  certificate_not_before: string;
+  certificate_not_after: string;
+  certificate_key_type: string;
+  certificate_serial: string;
   certificate_pem: string;
   algorithm: string;
   signed_at: string;
@@ -21,7 +26,7 @@ type SignResult = {
 
 type Attachment = SignResult & { id: string };
 
-const ALLOWED_EXTENSIONS = ['.vba', '.bas', '.cls', '.frm', '.vbs'];
+const ALLOWED_EXTENSIONS = ['.vba', '.bas', '.cls', '.frm', '.vbs', '.xlsm', '.xlsb', '.pptm', '.potm', '.dotm', '.xltm', '.docm'];
 
 function generateTicket() {
   return `REQ${String(Math.floor(100000 + Math.random() * 900000))}`;
@@ -515,16 +520,53 @@ function SNOWForm({
                       </button>
 
                       {showDetails === a.id && (
-                        <div className="mt-2 ml-8 bg-gray-50 border border-gray-200 rounded p-3 space-y-1.5 text-[11px]">
-                          <Detail label="Status" value={a.status} valueClass="text-green-700 font-semibold uppercase" />
-                          <Detail label="File Hash" value={a.file_hash} mono />
-                          <Detail label="Signature" value={truncate(a.signature, 64)} mono />
-                          <Detail label="Algorithm" value={a.algorithm.toUpperCase()} />
-                          <Detail label="Domain" value={a.domain} />
-                          <Detail label="Cert Subject" value={a.certificate_subject} />
-                          <Detail label="Cert Fingerprint" value={truncate(a.certificate_fingerprint, 48)} mono />
-                          <Detail label="Signed At" value={formatDate(a.signed_at)} />
-                          {a.requester_id && <Detail label="Requester ID" value={a.requester_id} />}
+                        <div className="mt-2 ml-8 space-y-3 text-[11px]">
+                          {/* Signing Result */}
+                          <div className="bg-green-50 border border-green-200 rounded p-3 space-y-1.5">
+                            <p className="text-green-800 font-semibold text-xs mb-2">Signing Result</p>
+                            <Detail label="Status" value={a.status} valueClass="text-green-700 font-semibold uppercase" />
+                            <Detail label="File Hash" value={a.file_hash} mono />
+                            <Detail label="Signature" value={truncate(a.signature, 64)} mono />
+                            <Detail label="Algorithm" value={a.algorithm.toUpperCase()} />
+                            <Detail label="Domain" value={a.domain} />
+                            <Detail label="Signed At" value={formatDate(a.signed_at)} />
+                            {a.requester_id && <Detail label="Requester ID" value={a.requester_id} />}
+                          </div>
+
+                          {/* Certificate Details */}
+                          <div className="bg-blue-50 border border-blue-200 rounded p-3 space-y-1.5">
+                            <p className="text-blue-800 font-semibold text-xs mb-2">Certificate Used</p>
+                            <Detail label="Subject" value={a.certificate_subject} />
+                            <Detail label="Issuer" value={a.certificate_issuer || 'N/A'} />
+                            <Detail label="Key Type" value={a.certificate_key_type || 'N/A'} />
+                            <Detail label="Serial" value={truncate(a.certificate_serial || 'N/A', 40)} mono />
+                            <Detail label="Fingerprint" value={truncate(a.certificate_fingerprint, 48)} mono />
+                            <Detail label="Valid From" value={a.certificate_not_before ? formatDate(a.certificate_not_before) : 'N/A'} />
+                            <Detail label="Valid Until" value={a.certificate_not_after ? formatDate(a.certificate_not_after) : 'N/A'} />
+                            {a.certificate_not_after && (
+                              <Detail
+                                label="Expiry Status"
+                                value={new Date(a.certificate_not_after) > new Date() ? 'Valid' : 'EXPIRED'}
+                                valueClass={new Date(a.certificate_not_after) > new Date() ? 'text-green-700 font-semibold' : 'text-red-700 font-semibold'}
+                              />
+                            )}
+                          </div>
+
+                          {/* Signing Log */}
+                          <div className="bg-gray-900 text-gray-100 rounded p-3 font-mono text-[10px] leading-relaxed whitespace-pre-wrap">
+                            <p className="text-gray-400 font-sans font-semibold text-xs mb-2">Signing Log</p>
+                            {`[${formatDate(a.signed_at)}] INFO  Received signing request for "${a.original_filename}" (${formatBytes(a.file_size)})
+[${formatDate(a.signed_at)}] INFO  File validation passed — extension OK, size OK
+[${formatDate(a.signed_at)}] INFO  Using certificate domain="${a.domain}"
+[${formatDate(a.signed_at)}] INFO  Certificate loaded: ${a.certificate_subject}
+[${formatDate(a.signed_at)}] INFO  Issuer: ${a.certificate_issuer || 'self-signed'}
+[${formatDate(a.signed_at)}] INFO  Key type: ${a.certificate_key_type || 'N/A'}
+[${formatDate(a.signed_at)}] INFO  Computing ${a.algorithm.toUpperCase()} hash of file content…
+[${formatDate(a.signed_at)}] INFO  File hash: ${a.file_hash}
+[${formatDate(a.signed_at)}] INFO  Signing hash with private key…
+[${formatDate(a.signed_at)}] INFO  Signature: ${truncate(a.signature, 48)}
+[${formatDate(a.signed_at)}] INFO  Signing COMPLETE — status=signed`}
+                          </div>
                         </div>
                       )}
                     </div>
@@ -543,18 +585,25 @@ function SNOWForm({
                   </p>
                 ) : (
                   attachments.map((a) => (
-                    <div key={a.id} className="flex gap-2">
-                      <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <svg className="w-3.5 h-3.5 text-green-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
+                    <div key={a.id} className="border-l-2 border-green-300 pl-3 space-y-1.5">
+                      <div className="flex gap-2 items-start">
+                        <div className="w-6 h-6 rounded-full bg-green-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                          <svg className="w-3.5 h-3.5 text-green-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <polyline points="20 6 9 17 4 12" />
+                          </svg>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-800">
+                            <span className="font-semibold">{user}</span> signed and attached{' '}
+                            <span className="font-medium">{a.original_filename}</span>
+                          </p>
+                          <p className="text-[11px] text-gray-400">{formatDate(a.signed_at)}</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-xs text-gray-800">
-                          <span className="font-semibold">{user}</span> signed and attached{' '}
-                          <span className="font-medium">{a.original_filename}</span>
-                        </p>
-                        <p className="text-[11px] text-gray-400">{formatDate(a.signed_at)}</p>
+                      <div className="ml-8 text-[10px] text-gray-500 space-y-0.5">
+                        <p>Algorithm: {a.algorithm.toUpperCase()} | Domain: {a.domain}</p>
+                        <p>Certificate: {a.certificate_subject}</p>
+                        <p>Key: {a.certificate_key_type || 'N/A'} | Fingerprint: {truncate(a.certificate_fingerprint, 24)}</p>
                       </div>
                     </div>
                   ))

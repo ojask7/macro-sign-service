@@ -47,7 +47,7 @@ SNOW_TEST_DOMAIN = "snow-test-domain"
 )
 async def snow_sign_macro(
     request: Request,
-    file: UploadFile = File(..., description="Macro file to sign (.vba, .bas, .cls, .frm, .vbs)"),
+    file: UploadFile = File(..., description="Macro file to sign (.vba, .bas, .cls, .frm, .vbs, .xlsm, .xlsb, .pptm, .potm, .dotm, .xltm, .docm)"),
     algorithm: str = Form("sha256", description="Hash algorithm: sha256 | sha384 | sha512"),
     domain: str = Form(
         SNOW_TEST_DOMAIN,
@@ -146,7 +146,19 @@ async def snow_sign_macro(
         requester_id=requester_id,
     )
 
+    from cryptography.hazmat.primitives import hashes as _hashes
+    from cryptography.hazmat.primitives.asymmetric import ec as _ec
+    from cryptography.hazmat.primitives.asymmetric import rsa as _rsa
+
     cert_obj = _x509.load_pem_x509_certificate(cert_info.certificate_pem)
+
+    pub_key = cert_obj.public_key()
+    if isinstance(pub_key, _rsa.RSAPublicKey):
+        key_type = f"RSA-{pub_key.key_size}"
+    elif isinstance(pub_key, _ec.EllipticCurvePublicKey):
+        key_type = f"EC-{pub_key.curve.name}"
+    else:
+        key_type = "Unknown"
 
     return SNOWSignResponse(
         status="signed",
@@ -157,6 +169,11 @@ async def snow_sign_macro(
         file_hash=result.file_hash,
         certificate_fingerprint=result.certificate_fingerprint,
         certificate_subject=cert_obj.subject.rfc4514_string(),
+        certificate_issuer=cert_obj.issuer.rfc4514_string(),
+        certificate_not_before=cert_obj.not_valid_before_utc,
+        certificate_not_after=cert_obj.not_valid_after_utc,
+        certificate_key_type=key_type,
+        certificate_serial=str(cert_obj.serial_number),
         certificate_pem=cert_info.certificate_pem.decode(),
         algorithm=result.algorithm,
         signed_at=result.signed_at,

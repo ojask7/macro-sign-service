@@ -9,7 +9,7 @@ interface UploadMacroModalProps {
   onSuccess?: (job: any) => void;
 }
 
-const ALLOWED_EXTENSIONS = ['.vba', '.bas', '.cls', '.frm', '.vbs'];
+const ALLOWED_EXTENSIONS = ['.vba', '.bas', '.cls', '.frm', '.vbs', '.xlsm', '.xlsb', '.pptm', '.potm', '.dotm', '.xltm', '.docm'];
 
 export default function UploadMacroModal({ isOpen, onClose, onSuccess }: UploadMacroModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);

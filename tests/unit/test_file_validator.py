@@ -34,6 +34,10 @@ class TestFileValidator:
         for ext in [".vba", ".bas", ".cls", ".frm", ".vbs"]:
             validator.validate(f"test{ext}", valid_content)
 
+    def test_valid_office_macro_extensions(self, validator, valid_content):
+        for ext in [".xlsm", ".xlsb", ".pptm", ".potm", ".dotm", ".xltm", ".docm"]:
+            validator.validate(f"test{ext}", valid_content)
+
     def test_invalid_extension(self, validator, valid_content):
         with pytest.raises(FileValidationError, match="not allowed"):
             validator.validate("test.exe", valid_content)

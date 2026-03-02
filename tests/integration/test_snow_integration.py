@@ -265,6 +265,11 @@ class TestSNOWHappyPath:
         assert body["file_hash"]
         assert body["certificate_fingerprint"]
         assert body["certificate_subject"]
+        assert body["certificate_issuer"]
+        assert body["certificate_not_before"]
+        assert body["certificate_not_after"]
+        assert body["certificate_key_type"]
+        assert body["certificate_serial"]
         assert body["certificate_pem"].startswith("-----BEGIN CERTIFICATE-----")
         assert body["algorithm"] == "sha256"
         assert body["signed_at"]
@@ -399,6 +404,16 @@ class TestSNOWRoundTrip:
 
 class TestSNOWInputValidation:
     """SNOW-008/009: API rejects invalid file types and oversized files."""
+
+    @pytest.mark.parametrize(
+        "filename",
+        ["macro.xlsm", "workbook.xlsb", "slide.pptm", "template.potm", "word.dotm", "sheet.xltm", "doc.docm"],
+    )
+    def test_office_macro_extensions_accepted(self, client, filename):
+        """Office macro-enabled file types (.xlsm, .xlsb, .pptm, etc.) are accepted."""
+        resp = _snow_sign(client, SAMPLE_VBA, filename)
+        assert resp.status_code == 200, f"Expected 200 for {filename}, got {resp.status_code}: {resp.text}"
+        assert resp.json()["status"] == "signed"
 
     @pytest.mark.parametrize(
         "bad_filename",

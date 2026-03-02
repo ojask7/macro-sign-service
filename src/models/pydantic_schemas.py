@@ -344,6 +344,11 @@ class SNOWSignResponse(BaseModel):
     file_hash: str  # hex SHA-256/384/512 hash of the file
     certificate_fingerprint: str  # SHA-256 fingerprint of signing cert
     certificate_subject: str  # X.509 subject (CN=..., O=..., C=...)
+    certificate_issuer: str  # X.509 issuer (CN=..., O=..., C=...)
+    certificate_not_before: datetime  # certificate validity start
+    certificate_not_after: datetime  # certificate validity end
+    certificate_key_type: str  # e.g. "RSA-2048", "EC-secp256r1"
+    certificate_serial: str  # certificate serial number
     certificate_pem: str  # PEM-encoded public cert for client-side verification
     algorithm: str  # hash algorithm used
     signed_at: datetime
