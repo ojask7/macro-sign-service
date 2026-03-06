@@ -351,6 +351,29 @@ class SNOWSignResponse(BaseModel):
     domain: str  # certificate domain/name used for signing
 
 
+class SNOWSignVBAResponse(BaseModel):
+    """
+    Response for VBA-signed Office files.
+    The signed file is returned with embedded digital signature visible
+    in Excel/Word under Alt+F11 → Tools → Digital Signature.
+    """
+
+    status: str  # "signed"
+    original_filename: str
+    signed_filename: str
+    file_size: int
+    signed_file_b64: str  # base64-encoded signed Office file
+    certificate_fingerprint: str
+    certificate_subject: str
+    certificate_pem: str
+    algorithm: str
+    signed_at: datetime
+    signing_method: str  # windows-authenticode, osslsigncode, package-for-windows
+    pfx_b64: Optional[str] = None  # base64 PFX for Windows-side signing when needed
+    requester_id: Optional[str] = None
+    domain: str
+
+
 class SNOWVerifyResponse(BaseModel):
     """Response from SNOW signature verification endpoint."""
 
@@ -360,6 +383,23 @@ class SNOWVerifyResponse(BaseModel):
     certificate_expiry: Optional[datetime] = None
     message: str
     domain: Optional[str] = None
+
+
+class CertificateProofResponse(BaseModel):
+    """Certificate details for proving that a file was signed."""
+
+    name: str
+    subject: str
+    issuer: str
+    serial_number: str
+    not_valid_before: str
+    not_valid_after: str
+    fingerprint_sha256: str
+    key_type: str
+    is_code_signing: bool
+    extensions: dict[str, Any] = {}
+    certificate_pem: str
+    pfx_available: bool = False
 
 
 # ============================================================================

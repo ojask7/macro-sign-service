@@ -5,10 +5,13 @@ Command-line tool for signing VBA macros locally and via the service API.
 
 Usage:
     python -m cli.macro_sign_cli sign <file> [--profile NAME] [--algorithm sha256]
+    python -m cli.macro_sign_cli sign-vba <file.xlsm> [--output signed.xlsm]
     python -m cli.macro_sign_cli verify <file> --signature <hex>
     python -m cli.macro_sign_cli status <job_id>
     python -m cli.macro_sign_cli health
     python -m cli.macro_sign_cli generate-cert [--name "Dev Cert"] [--days 365]
+    python -m cli.macro_sign_cli generate-pfx [--name "Dev Cert"] [--days 365]
+    python -m cli.macro_sign_cli cert-info [--cert-dir ./certs]
 """
 
 from __future__ import annotations
@@ -354,6 +357,167 @@ def cmd_generate_cert(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_sign_vba(args: argparse.Namespace) -> int:
+    """Sign an Office macro file with embedded VBA project signature."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+
+        from src.core.vba_signing import (
+            VBASigningEngine,
+            create_code_signing_pfx,
+        )
+
+        file_path = Path(args.file)
+        if not file_path.exists():
+            print(f"Error: File not found: {file_path}", file=sys.stderr)
+            return 1
+
+        content = file_path.read_bytes()
+
+        # Load or generate certificate
+        cert_dir = Path(args.cert_dir or "./certs")
+        cert_path = cert_dir / "default.pem"
+        key_path = cert_dir / "default.key"
+        pfx_path = cert_dir / "default.pfx"
+
+        if pfx_path.exists() and cert_path.exists() and key_path.exists():
+            print(f"Using existing certificate from {cert_dir}/")
+            cert_pem = cert_path.read_bytes()
+            key_pem = key_path.read_bytes()
+        elif cert_path.exists() and key_path.exists():
+            print(f"Using existing PEM certificate, generating PFX...")
+            cert_pem = cert_path.read_bytes()
+            key_pem = key_path.read_bytes()
+            from src.core.vba_signing import pem_to_pfx
+            pfx_bytes = pem_to_pfx(cert_pem, key_pem)
+            pfx_path.write_bytes(pfx_bytes)
+            print(f"PFX saved to {pfx_path}")
+        else:
+            print("No certificate found. Generating code-signing certificate...")
+            cert_dir.mkdir(parents=True, exist_ok=True)
+            pfx_bytes, cert_pem, key_pem = create_code_signing_pfx(
+                common_name=args.name or "Macro Sign Service Dev",
+                organization=args.organization or "Development",
+                days_valid=args.days or 365,
+            )
+            cert_path.write_bytes(cert_pem)
+            key_path.write_bytes(key_pem)
+            pfx_path.write_bytes(pfx_bytes)
+            print(f"Certificate generated in {cert_dir}/")
+
+        engine = VBASigningEngine(
+            certificate_pem=cert_pem,
+            private_key_pem=key_pem,
+        )
+        result = engine.sign_file(content, file_path.name, algorithm=args.algorithm)
+
+        # Determine output path
+        if args.output:
+            output_path = Path(args.output)
+        else:
+            output_path = file_path.parent / f"{file_path.stem}_signed{file_path.suffix}"
+
+        output_path.write_bytes(result.signed_file_bytes)
+
+        print(f"\nSigning complete!")
+        print(f"  Method: {result.signing_method}")
+        print(f"  Input:  {file_path}")
+        print(f"  Output: {output_path}")
+        print(f"  Certificate: {result.certificate_subject}")
+        print(f"  Fingerprint: {result.certificate_fingerprint}")
+        print(f"  Algorithm: {result.algorithm}")
+
+        if result.signing_method == "package-for-windows":
+            print(f"\n  NOTE: No Windows signing tool was found on this system.")
+            print(f"  The output file is unsigned. To sign on Windows:")
+            print(f"  1. Copy {pfx_path} to the Windows machine")
+            print(f"  2. Run the following PowerShell command:")
+            print(f'     $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("{pfx_path.name}", "", "Exportable")')
+            print(f'     Set-AuthenticodeSignature -FilePath "{output_path.name}" -Certificate $cert')
+            print(f"  Or use: scripts/sign-vba.ps1 -File \"{output_path.name}\" -PfxFile \"{pfx_path.name}\"")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_generate_pfx(args: argparse.Namespace) -> int:
+    """Generate a PFX code-signing certificate for Windows VBA signing."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+
+        from src.core.vba_signing import create_code_signing_pfx
+
+        pfx_bytes, cert_pem, key_pem = create_code_signing_pfx(
+            common_name=args.name,
+            organization=args.organization,
+            days_valid=args.days,
+            key_size=args.key_size,
+        )
+
+        output_dir = Path(args.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        pfx_path = output_dir / f"{args.cert_name}.pfx"
+        cert_path = output_dir / f"{args.cert_name}.pem"
+        key_path = output_dir / f"{args.cert_name}.key"
+
+        pfx_path.write_bytes(pfx_bytes)
+        cert_path.write_bytes(cert_pem)
+        key_path.write_bytes(key_pem)
+
+        print(f"Code-signing certificate generated:")
+        print(f"  PFX (Windows): {pfx_path}")
+        print(f"  Certificate:   {cert_path}")
+        print(f"  Private key:   {key_path}")
+        print(f"  Common Name:   {args.name}")
+        print(f"  Valid for:     {args.days} days")
+        print(f"\nTo sign on Windows:")
+        print(f'  $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("{pfx_path}", "", "Exportable")')
+        print(f'  Set-AuthenticodeSignature -FilePath "macro.xlsm" -Certificate $cert')
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_cert_info(args: argparse.Namespace) -> int:
+    """Display certificate details and signing proof."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent.parent))
+
+        from src.core.vba_signing import get_certificate_details
+
+        cert_dir = Path(args.cert_dir or "./certs")
+        cert_name = args.cert_name or "default"
+        cert_path = cert_dir / f"{cert_name}.pem"
+
+        if not cert_path.exists():
+            print(f"Error: Certificate not found: {cert_path}", file=sys.stderr)
+            return 1
+
+        cert_pem = cert_path.read_bytes()
+        details = get_certificate_details(cert_pem)
+
+        # Check if PFX exists
+        pfx_path = cert_dir / f"{cert_name}.pfx"
+        details["pfx_available"] = pfx_path.exists()
+
+        # Remove the full PEM from display (too long)
+        display = {k: v for k, v in details.items() if k != "certificate_pem"}
+
+        print(f"Certificate: {cert_path}")
+        print_json(display)
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         prog="macro-sign",
@@ -401,6 +565,20 @@ def main() -> int:
     # Health command
     subparsers.add_parser("health", help="Check service health")
 
+    # Sign VBA command (Office files with embedded signature)
+    sign_vba_parser = subparsers.add_parser(
+        "sign-vba", help="Sign Office macro file with embedded VBA signature"
+    )
+    sign_vba_parser.add_argument("file", help="Path to Office macro file (.xlsm, .docm, etc.)")
+    sign_vba_parser.add_argument("--output", "-o", help="Output path for signed file")
+    sign_vba_parser.add_argument(
+        "--algorithm", "-a", default="sha256", choices=["sha256", "sha384", "sha512"]
+    )
+    sign_vba_parser.add_argument("--cert-dir", help="Certificate directory")
+    sign_vba_parser.add_argument("--name", help="Certificate common name (for generation)")
+    sign_vba_parser.add_argument("--organization", help="Certificate organization (for generation)")
+    sign_vba_parser.add_argument("--days", type=int, help="Certificate validity days (for generation)")
+
     # Generate cert command
     cert_parser = subparsers.add_parser("generate-cert", help="Generate self-signed certificate")
     cert_parser.add_argument("--name", default="Macro Sign Service Dev", help="Common name")
@@ -409,6 +587,24 @@ def main() -> int:
     cert_parser.add_argument("--key-size", type=int, default=2048, help="RSA key size")
     cert_parser.add_argument("--output-dir", default="./certs", help="Output directory")
     cert_parser.add_argument("--cert-name", default="default", help="Certificate file name")
+
+    # Generate PFX command (Windows-compatible code signing cert)
+    pfx_parser = subparsers.add_parser(
+        "generate-pfx", help="Generate PFX code-signing certificate for Windows"
+    )
+    pfx_parser.add_argument("--name", default="Macro Sign Service Dev", help="Common name")
+    pfx_parser.add_argument("--organization", default="Development", help="Organization")
+    pfx_parser.add_argument("--days", type=int, default=365, help="Days valid")
+    pfx_parser.add_argument("--key-size", type=int, default=2048, help="RSA key size")
+    pfx_parser.add_argument("--output-dir", default="./certs", help="Output directory")
+    pfx_parser.add_argument("--cert-name", default="default", help="Certificate file name")
+
+    # Certificate info command
+    info_parser = subparsers.add_parser(
+        "cert-info", help="Display certificate details and signing proof"
+    )
+    info_parser.add_argument("--cert-dir", default="./certs", help="Certificate directory")
+    info_parser.add_argument("--cert-name", default="default", help="Certificate name")
 
     args = parser.parse_args()
 
@@ -424,10 +620,13 @@ def main() -> int:
 
     commands = {
         "sign": cmd_sign,
+        "sign-vba": cmd_sign_vba,
         "verify": cmd_verify,
         "status": cmd_status,
         "health": cmd_health,
         "generate-cert": cmd_generate_cert,
+        "generate-pfx": cmd_generate_pfx,
+        "cert-info": cmd_cert_info,
     }
 
     handler = commands.get(args.command)

@@ -76,25 +76,60 @@ def sign_macro_task(
         finally:
             loop.close()
 
-        # Create signing engine and sign
-        engine = SigningEngine(
-            private_key_pem=cert_info.private_key_pem,
-            certificate_pem=cert_info.certificate_pem,
-        )
+        # Check if this is an Office macro file that should use VBA signing
+        from pathlib import Path as _Path
+        from src.config.settings import get_settings
 
-        result = engine.sign(file_content, algorithm=algorithm, metadata=metadata)
-        elapsed = time.time() - start_time
+        _settings = get_settings()
+        _vba_extensions = {".xlsm", ".xlsb", ".docm", ".pptm", ".xltm", ".dotm", ".potm"}
+        _original_filename = metadata.get("original_filename", "") if metadata else ""
+        _ext = _Path(_original_filename).suffix.lower() if _original_filename else ""
 
-        signing_result = {
-            "job_id": job_id,
-            "status": "completed",
-            "signature": result.signature.hex(),
-            "file_hash": result.file_hash,
-            "certificate_fingerprint": result.certificate_fingerprint,
-            "algorithm": result.algorithm,
-            "signed_at": result.signed_at.isoformat(),
-            "elapsed_seconds": round(elapsed, 3),
-        }
+        if _settings.signing.use_vba_signing and _ext in _vba_extensions:
+            from src.core.vba_signing import VBASigningEngine
+
+            vba_engine = VBASigningEngine(
+                certificate_pem=cert_info.certificate_pem,
+                private_key_pem=cert_info.private_key_pem,
+                pfx_password=_settings.signing.pfx_password,
+            )
+            vba_result = vba_engine.sign_file(
+                file_content, _original_filename, algorithm=algorithm
+            )
+            elapsed = time.time() - start_time
+
+            import base64
+            signing_result = {
+                "job_id": job_id,
+                "status": "completed",
+                "signed_file_b64": base64.b64encode(vba_result.signed_file_bytes).decode(),
+                "certificate_fingerprint": vba_result.certificate_fingerprint,
+                "certificate_subject": vba_result.certificate_subject,
+                "algorithm": vba_result.algorithm,
+                "signing_method": vba_result.signing_method,
+                "signed_at": vba_result.signed_at.isoformat(),
+                "elapsed_seconds": round(elapsed, 3),
+            }
+        else:
+            # Standard detached signature for text-based macro files
+            engine = SigningEngine(
+                private_key_pem=cert_info.private_key_pem,
+                certificate_pem=cert_info.certificate_pem,
+            )
+
+            result = engine.sign(file_content, algorithm=algorithm, metadata=metadata)
+            elapsed = time.time() - start_time
+
+            signing_result = {
+                "job_id": job_id,
+                "status": "completed",
+                "signature": result.signature.hex(),
+                "file_hash": result.file_hash,
+                "certificate_fingerprint": result.certificate_fingerprint,
+                "algorithm": result.algorithm,
+                "signed_at": result.signed_at.isoformat(),
+                "elapsed_seconds": round(elapsed, 3),
+            }
 
         logger.info(
             "Signing task completed",

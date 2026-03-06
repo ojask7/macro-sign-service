@@ -203,7 +203,9 @@ class SigningSettings(BaseSettings):
 
     default_algorithm: str = "sha256"
     max_file_size_mb: int = 50
-    allowed_extensions: str = ".vba,.bas,.cls,.frm,.vbs"
+    allowed_extensions: str = ".vba,.bas,.cls,.frm,.vbs,.xlsm,.xlsb,.docm,.pptm,.xltm,.dotm,.potm"
+    use_vba_signing: bool = True
+    pfx_password: str = ""
 
     @property
     def allowed_extensions_list(self) -> List[str]:

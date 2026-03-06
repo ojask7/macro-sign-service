@@ -40,6 +40,7 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         libpq5 \
         curl \
+        osslsigncode \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from base
@@ -49,6 +50,7 @@ COPY --from=base /usr/local/bin /usr/local/bin
 # Copy application code
 COPY src/ ./src/
 COPY cli/ ./cli/
+COPY scripts/ ./scripts/
 COPY pyproject.toml .
 
 # Create non-root user
