@@ -206,6 +206,7 @@ class SigningSettings(BaseSettings):
     allowed_extensions: str = ".vba,.bas,.cls,.frm,.vbs,.xlsm,.xlsb,.docm,.pptm,.xltm,.dotm,.potm"
     use_vba_signing: bool = True
     pfx_password: str = ""
+    windows_agent_url: str = ""
 
     @property
     def allowed_extensions_list(self) -> List[str]:

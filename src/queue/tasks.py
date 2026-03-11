@@ -92,6 +92,7 @@ def sign_macro_task(
                 certificate_pem=cert_info.certificate_pem,
                 private_key_pem=cert_info.private_key_pem,
                 pfx_password=_settings.signing.pfx_password,
+                windows_agent_url=_settings.signing.windows_agent_url,
             )
             vba_result = vba_engine.sign_file(
                 file_content, _original_filename, algorithm=algorithm

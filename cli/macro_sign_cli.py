@@ -427,14 +427,15 @@ def cmd_sign_vba(args: argparse.Namespace) -> int:
         print(f"  Fingerprint: {result.certificate_fingerprint}")
         print(f"  Algorithm: {result.algorithm}")
 
-        if result.signing_method == "package-for-windows":
-            print(f"\n  NOTE: No Windows signing tool was found on this system.")
-            print(f"  The output file is unsigned. To sign on Windows:")
-            print(f"  1. Copy {pfx_path} to the Windows machine")
-            print(f"  2. Run the following PowerShell command:")
-            print(f'     $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("{pfx_path.name}", "", "Exportable")')
-            print(f'     Set-AuthenticodeSignature -FilePath "{output_path.name}" -Certificate $cert')
-            print(f"  Or use: scripts/sign-vba.ps1 -File \"{output_path.name}\" -PfxFile \"{pfx_path.name}\"")
+        if result.signing_method == "unsigned-requires-windows":
+            print(f"\n  WARNING: File is NOT signed. No Windows signing capability found.")
+            print(f"  VBA project signing requires signtool.exe + Office SIP DLLs")
+            print(f"  (only available on Windows with Microsoft Office installed).")
+            print(f"\n  To sign on a Windows machine:")
+            print(f"  1. Copy {pfx_path} and {output_path} to the Windows machine")
+            print(f"  2. Run: scripts\\sign-vba.ps1 -File \"{output_path.name}\" -PfxFile \"{pfx_path.name}\"")
+            print(f"\n  Or set WINDOWS_SIGNING_AGENT_URL to delegate to a Windows agent.")
+            print(f"  See: scripts/windows_signing_agent.py")
 
         return 0
 

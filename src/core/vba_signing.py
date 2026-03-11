@@ -1,9 +1,31 @@
 """
-Windows-native VBA project signing engine.
+VBA project signing engine.
 
-Uses Windows tools (Set-AuthenticodeSignature / signtool.exe) to embed
-digital signatures directly into Office macro files so that the certificate
-is visible under Alt+F11 → Tools → Digital Signature in Excel/Word.
+IMPORTANT — WHY ONLY WINDOWS CAN SIGN VBA PROJECTS:
+  Office VBA project signing requires Microsoft's Office SIP (Subject Interface
+  Package) DLLs (msosip.dll / msosipx.dll).  These DLLs are installed
+  automatically when Microsoft Office is present on Windows.  They register
+  with the Windows CryptoAPI as a SIP provider and tell signtool.exe how to
+  locate, hash, and embed a digital signature inside the VBA project stream
+  of an Office compound document (.xlsm, .docm, .pptm, etc.).
+
+  WITHOUT the Office SIP DLLs:
+    - osslsigncode → signs the PE/Authenticode envelope, NOT the VBA project.
+      Office ignores this.
+    - Set-AuthenticodeSignature → same issue; produces an Authenticode sig
+      that Office does not check for VBA macros.
+    - Any Linux-based tool → cannot produce what Office expects.
+
+  Office checks the VBA project signature (Alt+F11 -> Tools -> Digital
+  Signature).  That signature lives inside the OLE compound document and can
+  ONLY be created by signtool.exe when the Office SIP is registered.
+
+Architecture:
+  1. On Windows (with Office + Windows SDK): sign locally via signtool.exe
+  2. On Linux / Docker: delegate to a remote Windows Signing Agent over HTTP
+     (see scripts/windows_signing_agent.py)
+  3. Fallback: return the unsigned file + PFX + instructions so the caller
+     can sign on a Windows machine manually.
 
 This module also provides PFX (PKCS#12) certificate generation and
 conversion, since Windows signing tools require .pfx format.
@@ -21,6 +43,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import httpx
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -63,7 +86,7 @@ def create_code_signing_pfx(
     PFX, PEM-cert, and PEM-key formats.
 
     The certificate includes the Code Signing extended key usage OID which
-    is required for Windows Authenticode / VBA project signing.
+    is required for signtool / VBA project signing on Windows.
 
     Returns:
         (pfx_bytes, certificate_pem, private_key_pem)
@@ -167,7 +190,7 @@ def pem_to_pfx(
 
 
 # ---------------------------------------------------------------------------
-# Windows VBA signing via PowerShell / signtool
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -180,7 +203,6 @@ def _find_signtool() -> Optional[str]:
     signtool = shutil.which("signtool")
     if signtool:
         return signtool
-    # Common Windows SDK paths
     sdk_paths = [
         r"C:\Program Files (x86)\Windows Kits\10\bin",
         r"C:\Program Files\Windows Kits\10\bin",
@@ -188,13 +210,17 @@ def _find_signtool() -> Optional[str]:
     for sdk_base in sdk_paths:
         sdk_path = Path(sdk_base)
         if sdk_path.exists():
-            # Find newest version
             versions = sorted(sdk_path.iterdir(), reverse=True)
             for ver in versions:
                 candidate = ver / "x64" / "signtool.exe"
                 if candidate.exists():
                     return str(candidate)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Result
+# ---------------------------------------------------------------------------
 
 
 class VBASigningResult:
@@ -232,13 +258,20 @@ class VBASigningResult:
         }
 
 
+# ---------------------------------------------------------------------------
+# Engine
+# ---------------------------------------------------------------------------
+
+
 class VBASigningEngine:
     """
-    Signs Office macro files so that the digital signature is embedded
-    in the VBA project and visible in Excel/Word under Tools → Digital Signature.
+    Signs Office macro files so the digital signature is embedded in the
+    VBA project and visible in Excel/Word under Tools -> Digital Signature.
 
-    On Windows: uses PowerShell Set-AuthenticodeSignature or signtool.exe
-    Fallback: uses osslsigncode (Linux/macOS) if available
+    Priority order:
+      1. Local Windows signtool.exe  (requires Office SIP DLLs on this machine)
+      2. Remote Windows Signing Agent (HTTP call — see scripts/windows_signing_agent.py)
+      3. Fallback: returns unsigned file + PFX for manual Windows signing
     """
 
     def __init__(
@@ -247,11 +280,16 @@ class VBASigningEngine:
         pfx_password: str = "",
         certificate_pem: Optional[bytes] = None,
         private_key_pem: Optional[bytes] = None,
+        windows_agent_url: Optional[str] = None,
     ) -> None:
         self._pfx_bytes = pfx_bytes
         self._pfx_password = pfx_password
         self._certificate_pem = certificate_pem
         self._private_key_pem = private_key_pem
+        self._windows_agent_url = (
+            windows_agent_url
+            or os.environ.get("WINDOWS_SIGNING_AGENT_URL", "")
+        )
 
         # If we have PEM but no PFX, convert
         if not pfx_bytes and certificate_pem and private_key_pem:
@@ -277,6 +315,10 @@ class VBASigningEngine:
             raise VBASigningError("No certificate loaded")
         return self._cert_obj.subject.rfc4514_string()
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def sign_file(
         self,
         file_content: bytes,
@@ -284,32 +326,59 @@ class VBASigningEngine:
         algorithm: str = "sha256",
     ) -> VBASigningResult:
         """
-        Sign an Office macro file, embedding the digital signature into the
-        VBA project.
+        Sign an Office macro file so the certificate is visible in the
+        VBA editor Digital Signature dialog.
 
-        Args:
-            file_content: Raw bytes of the Office file (.xlsm, .docm, etc.)
-            filename: Original filename (used to determine the temp file extension)
-            algorithm: Hash algorithm for the signature (sha256, sha384, sha512)
-
-        Returns:
-            VBASigningResult with the signed file bytes
+        Tries in order:
+          1. Local signtool.exe (Windows + Office SIP)
+          2. Remote Windows Signing Agent (HTTP)
+          3. Fallback: unsigned file + PFX for manual signing
         """
         if not self._pfx_bytes:
             raise VBASigningError("No PFX certificate loaded. Cannot sign.")
 
+        # 1. Local Windows signing (signtool + Office SIP)
         if is_windows():
-            return self._sign_windows(file_content, filename, algorithm)
-        else:
-            return self._sign_with_osslsigncode(file_content, filename, algorithm)
+            result = self._sign_local_signtool(file_content, filename, algorithm)
+            if result:
+                return result
 
-    def _sign_windows(
+        # 2. Remote Windows Signing Agent
+        if self._windows_agent_url:
+            result = self._sign_via_agent(file_content, filename, algorithm)
+            if result:
+                return result
+
+        # 3. Fallback — no signing capability
+        logger.warning(
+            "No Windows signing capability available. "
+            "VBA project signing requires signtool.exe + Office SIP DLLs "
+            "(only on Windows with Microsoft Office installed). "
+            "Set WINDOWS_SIGNING_AGENT_URL to point to a Windows signing agent, "
+            "or run this service on Windows with Office installed.",
+            filename=filename,
+        )
+        return self._create_unsigned_package(file_content, filename, algorithm)
+
+    # ------------------------------------------------------------------
+    # Method 1: local signtool.exe on Windows
+    # ------------------------------------------------------------------
+
+    def _sign_local_signtool(
         self,
         file_content: bytes,
         filename: str,
         algorithm: str,
-    ) -> VBASigningResult:
-        """Sign using Windows PowerShell Set-AuthenticodeSignature."""
+    ) -> Optional[VBASigningResult]:
+        """
+        Sign using local signtool.exe with Office SIP DLLs.
+        Only works on Windows with Office installed.
+        """
+        signtool = _find_signtool()
+        if not signtool:
+            logger.warning("signtool.exe not found on this Windows machine")
+            return None
+
         work_dir = tempfile.mkdtemp(prefix="macrosign_")
         try:
             ext = Path(filename).suffix or ".xlsm"
@@ -319,209 +388,46 @@ class VBASigningEngine:
             input_file.write_bytes(file_content)
             pfx_file.write_bytes(self._pfx_bytes)
 
-            # Try PowerShell Set-AuthenticodeSignature first
-            signed_bytes = self._try_powershell_sign(
-                input_file, pfx_file, algorithm, work_dir
-            )
+            hash_map = {"sha256": "SHA256", "sha384": "SHA384", "sha512": "SHA512"}
+            hash_algo = hash_map.get(algorithm, "SHA256")
 
-            if signed_bytes is None:
-                # Fallback to signtool
-                signed_bytes = self._try_signtool_sign(
-                    input_file, pfx_file, algorithm, work_dir
-                )
+            cmd = [
+                signtool, "sign",
+                "/f", str(pfx_file),
+                "/fd", hash_algo,
+                "/v",
+            ]
+            if self._pfx_password:
+                cmd.extend(["/p", self._pfx_password])
+            cmd.append(str(input_file))
 
-            if signed_bytes is None:
-                raise VBASigningError(
-                    "No Windows signing tool available. "
-                    "Install Windows SDK (signtool.exe) or ensure PowerShell is available."
-                )
-
-            now = datetime.now(timezone.utc)
-            return VBASigningResult(
-                signed_file_bytes=signed_bytes,
-                original_filename=filename,
-                certificate_subject=self.certificate_subject,
-                certificate_fingerprint=self.certificate_fingerprint,
-                certificate_pem=self._certificate_pem.decode() if self._certificate_pem else "",
-                algorithm=algorithm,
-                signed_at=now,
-                signing_method="windows-authenticode",
-            )
-        finally:
-            shutil.rmtree(work_dir, ignore_errors=True)
-
-    def _try_powershell_sign(
-        self,
-        input_file: Path,
-        pfx_file: Path,
-        algorithm: str,
-        work_dir: str,
-    ) -> Optional[bytes]:
-        """Attempt signing via PowerShell Set-AuthenticodeSignature."""
-        powershell = shutil.which("powershell") or shutil.which("pwsh")
-        if not powershell:
-            return None
-
-        hash_map = {"sha256": "SHA256", "sha384": "SHA384", "sha512": "SHA512"}
-        hash_algo = hash_map.get(algorithm, "SHA256")
-
-        pfx_password_escaped = self._pfx_password.replace("'", "''")
-        script = f"""
-$ErrorActionPreference = 'Stop'
-$pfxPassword = ConvertTo-SecureString -String '{pfx_password_escaped}' -AsPlainText -Force
-$cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2('{pfx_file}', $pfxPassword, [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable)
-$result = Set-AuthenticodeSignature -FilePath '{input_file}' -Certificate $cert -HashAlgorithm {hash_algo}
-if ($result.Status -ne 'Valid') {{
-    Write-Error "Signing failed: $($result.StatusMessage)"
-    exit 1
-}}
-Write-Output "SIGNED_OK"
-"""
-        try:
             result = subprocess.run(
-                [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=work_dir,
+                cmd, capture_output=True, text=True, timeout=120, cwd=work_dir,
             )
-            if result.returncode == 0 and "SIGNED_OK" in result.stdout:
-                logger.info("File signed via PowerShell Set-AuthenticodeSignature")
-                return input_file.read_bytes()
-            else:
-                logger.warning(
-                    "PowerShell signing failed",
-                    stdout=result.stdout[:500],
-                    stderr=result.stderr[:500],
-                )
-                return None
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-            logger.warning("PowerShell signing unavailable", error=str(e))
-            return None
 
-    def _try_signtool_sign(
-        self,
-        input_file: Path,
-        pfx_file: Path,
-        algorithm: str,
-        work_dir: str,
-    ) -> Optional[bytes]:
-        """Attempt signing via signtool.exe."""
-        signtool = _find_signtool()
-        if not signtool:
-            return None
-
-        hash_map = {"sha256": "SHA256", "sha384": "SHA384", "sha512": "SHA512"}
-        hash_algo = hash_map.get(algorithm, "SHA256")
-
-        cmd = [
-            signtool, "sign",
-            "/f", str(pfx_file),
-            "/fd", hash_algo,
-            "/v",
-        ]
-        if self._pfx_password:
-            cmd.extend(["/p", self._pfx_password])
-        cmd.append(str(input_file))
-
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=work_dir,
-            )
-            if result.returncode == 0:
-                logger.info("File signed via signtool.exe")
-                return input_file.read_bytes()
-            else:
-                logger.warning(
+            if result.returncode != 0:
+                logger.error(
                     "signtool signing failed",
                     stdout=result.stdout[:500],
                     stderr=result.stderr[:500],
                 )
                 return None
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
-            logger.warning("signtool unavailable", error=str(e))
-            return None
 
-    def _sign_with_osslsigncode(
-        self,
-        file_content: bytes,
-        filename: str,
-        algorithm: str,
-    ) -> VBASigningResult:
-        """
-        Fallback for non-Windows: use osslsigncode if available,
-        otherwise produce a signed package (PFX + instructions).
-
-        On Linux this creates a signing package that a Windows worker
-        or local Windows machine can apply.
-        """
-        osslsigncode = shutil.which("osslsigncode")
-
-        if osslsigncode:
-            return self._run_osslsigncode(
-                osslsigncode, file_content, filename, algorithm
+            # Verify
+            verify_cmd = [signtool, "verify", "/pa", "/v", str(input_file)]
+            verify_result = subprocess.run(
+                verify_cmd, capture_output=True, text=True, timeout=30, cwd=work_dir,
             )
 
-        # No native signing tool available — produce the signed content
-        # with an embedded detached signature + PFX bundle for Windows application
-        logger.warning(
-            "No native signing tool found on this platform. "
-            "Generating signing package for Windows application."
-        )
-        return self._create_signing_package(file_content, filename, algorithm)
-
-    def _run_osslsigncode(
-        self,
-        osslsigncode_path: str,
-        file_content: bytes,
-        filename: str,
-        algorithm: str,
-    ) -> VBASigningResult:
-        """Sign using osslsigncode (cross-platform Authenticode signing)."""
-        work_dir = tempfile.mkdtemp(prefix="macrosign_")
-        try:
-            ext = Path(filename).suffix or ".xlsm"
-            input_file = Path(work_dir) / f"input{ext}"
-            output_file = Path(work_dir) / f"signed{ext}"
-            pfx_file = Path(work_dir) / "signing_cert.pfx"
-
-            input_file.write_bytes(file_content)
-            pfx_file.write_bytes(self._pfx_bytes)
-
-            hash_map = {"sha256": "sha256", "sha384": "sha384", "sha512": "sha512"}
-            h = hash_map.get(algorithm, "sha256")
-
-            cmd = [
-                osslsigncode_path, "sign",
-                "-pkcs12", str(pfx_file),
-                "-h", h,
-                "-in", str(input_file),
-                "-out", str(output_file),
-            ]
-            if self._pfx_password:
-                cmd.extend(["-pass", self._pfx_password])
-
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=work_dir,
-            )
-
-            if result.returncode != 0:
-                raise VBASigningError(
-                    f"osslsigncode failed: {result.stderr[:500]}"
-                )
-
-            signed_bytes = output_file.read_bytes()
+            signed_bytes = input_file.read_bytes()
             now = datetime.now(timezone.utc)
 
-            logger.info("File signed via osslsigncode")
+            logger.info(
+                "File signed via local signtool + Office SIP",
+                filename=filename,
+                verified=verify_result.returncode == 0,
+            )
+
             return VBASigningResult(
                 signed_file_bytes=signed_bytes,
                 original_filename=filename,
@@ -530,26 +436,114 @@ Write-Output "SIGNED_OK"
                 certificate_pem=self._certificate_pem.decode() if self._certificate_pem else "",
                 algorithm=algorithm,
                 signed_at=now,
-                signing_method="osslsigncode",
+                signing_method="signtool-office-sip",
             )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            logger.error("Local signtool signing failed", error=str(e))
+            return None
         finally:
             shutil.rmtree(work_dir, ignore_errors=True)
 
-    def _create_signing_package(
+    # ------------------------------------------------------------------
+    # Method 2: remote Windows Signing Agent
+    # ------------------------------------------------------------------
+
+    def _sign_via_agent(
+        self,
+        file_content: bytes,
+        filename: str,
+        algorithm: str,
+    ) -> Optional[VBASigningResult]:
+        """
+        Delegate signing to the Windows Signing Agent
+        (scripts/windows_signing_agent.py running on a Windows VM).
+        """
+        agent_url = self._windows_agent_url.rstrip("/")
+        hash_map = {"sha256": "SHA256", "sha384": "SHA384", "sha512": "SHA512"}
+        hash_algo = hash_map.get(algorithm, "SHA256")
+
+        payload = {
+            "file_b64": base64.b64encode(file_content).decode(),
+            "filename": filename,
+            "pfx_b64": base64.b64encode(self._pfx_bytes).decode(),
+            "pfx_password": self._pfx_password,
+            "hash_algorithm": hash_algo,
+        }
+
+        try:
+            # Health check
+            with httpx.Client(timeout=10.0) as client:
+                health = client.get(f"{agent_url}/health")
+                health_data = health.json()
+                if not health_data.get("signing_ready"):
+                    logger.warning(
+                        "Windows Signing Agent not ready",
+                        agent_url=agent_url,
+                        status=health_data,
+                    )
+                    return None
+
+            # Sign
+            with httpx.Client(timeout=120.0) as client:
+                response = client.post(f"{agent_url}/sign", json=payload)
+
+            if response.status_code != 200:
+                logger.error(
+                    "Windows Signing Agent error",
+                    status_code=response.status_code,
+                    body=response.text[:500],
+                )
+                return None
+
+            result_data = response.json()
+            if not result_data.get("signed"):
+                logger.error(
+                    "Windows Signing Agent signing failed",
+                    error=result_data.get("error"),
+                )
+                return None
+
+            signed_bytes = base64.b64decode(result_data["signed_file_b64"])
+            now = datetime.now(timezone.utc)
+
+            logger.info(
+                "File signed via Windows Signing Agent",
+                filename=filename,
+                agent_url=agent_url,
+            )
+
+            return VBASigningResult(
+                signed_file_bytes=signed_bytes,
+                original_filename=filename,
+                certificate_subject=self.certificate_subject,
+                certificate_fingerprint=self.certificate_fingerprint,
+                certificate_pem=self._certificate_pem.decode() if self._certificate_pem else "",
+                algorithm=algorithm,
+                signed_at=now,
+                signing_method="windows-agent-signtool-sip",
+            )
+
+        except httpx.ConnectError:
+            logger.warning("Cannot reach Windows Signing Agent", agent_url=agent_url)
+            return None
+        except Exception as e:
+            logger.error("Windows Signing Agent error", agent_url=agent_url, error=str(e))
+            return None
+
+    # ------------------------------------------------------------------
+    # Method 3: fallback — unsigned package
+    # ------------------------------------------------------------------
+
+    def _create_unsigned_package(
         self,
         file_content: bytes,
         filename: str,
         algorithm: str,
     ) -> VBASigningResult:
         """
-        When no native signing tool is available (non-Windows environment
-        without osslsigncode), create a signing package containing:
-        - The original file
-        - The PFX certificate
-        - A PowerShell script to apply the signature on Windows
-
-        The file is returned as-is (unsigned) with signing_method indicating
-        that Windows-side signing is needed.
+        No Windows signing available.  Return the file unsigned with
+        signing_method='unsigned-requires-windows'.  The API layer will
+        include the PFX so the caller can sign on a Windows machine.
         """
         now = datetime.now(timezone.utc)
         return VBASigningResult(
@@ -560,8 +554,13 @@ Write-Output "SIGNED_OK"
             certificate_pem=self._certificate_pem.decode() if self._certificate_pem else "",
             algorithm=algorithm,
             signed_at=now,
-            signing_method="package-for-windows",
+            signing_method="unsigned-requires-windows",
         )
+
+
+# ---------------------------------------------------------------------------
+# Certificate details helper
+# ---------------------------------------------------------------------------
 
 
 def get_certificate_details(cert_pem: bytes) -> dict[str, Any]:
@@ -580,13 +579,10 @@ def get_certificate_details(cert_pem: bytes) -> dict[str, Any]:
     else:
         key_info = "Unknown"
 
-    # Extract extensions
     extensions = {}
     try:
         eku = cert.extensions.get_extension_for_class(x509.ExtendedKeyUsage)
-        extensions["extended_key_usage"] = [
-            oid.dotted_string for oid in eku.value
-        ]
+        extensions["extended_key_usage"] = [oid.dotted_string for oid in eku.value]
     except x509.ExtensionNotFound:
         pass
 

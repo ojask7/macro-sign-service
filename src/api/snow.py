@@ -198,8 +198,7 @@ async def snow_sign_macro(
         "Sign an Office macro file (.xlsm, .docm, .pptm, etc.) so that the "
         "digital signature is embedded in the VBA project. The certificate will "
         "be visible under Alt+F11 → Tools → Digital Signature in Excel/Word. "
-        "On Windows uses Set-AuthenticodeSignature/signtool; on Linux uses osslsigncode "
-        "or returns a signing package with PFX for Windows-side application."
+        "Requires signtool.exe + Office SIP DLLs (local Windows or remote agent)."
     ),
 )
 async def snow_sign_vba(
@@ -264,6 +263,7 @@ async def snow_sign_vba(
             certificate_pem=cert_info.certificate_pem,
             private_key_pem=cert_info.private_key_pem,
             pfx_password=pfx_password,
+            windows_agent_url=settings.signing.windows_agent_url,
         )
         result = engine.sign_file(content, filename, algorithm=algorithm)
 
@@ -282,7 +282,7 @@ async def snow_sign_vba(
 
     # If signing produced a package-for-windows, include the PFX
     pfx_b64 = None
-    if result.signing_method == "package-for-windows" and cert_info.private_key_pem:
+    if result.signing_method == "unsigned-requires-windows" and cert_info.private_key_pem:
         pfx_bytes = pem_to_pfx(
             cert_info.certificate_pem,
             cert_info.private_key_pem,

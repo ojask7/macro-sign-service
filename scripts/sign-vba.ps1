@@ -1,15 +1,28 @@
 <#
 .SYNOPSIS
-    Sign an Office macro file (.xlsm, .docm, etc.) with a code-signing PFX certificate.
+    Sign an Office macro file (.xlsm, .docm, etc.) using signtool.exe + Office SIP.
 
 .DESCRIPTION
-    This script signs a VBA macro file using Set-AuthenticodeSignature so that
-    the digital signature is embedded in the VBA project and visible under
-    Alt+F11 -> Tools -> Digital Signature in Excel/Word.
+    This script signs a VBA macro file using Microsoft signtool.exe.  When
+    Microsoft Office is installed, its SIP (Subject Interface Package) DLLs
+    are registered with Windows CryptoAPI, which tells signtool how to embed
+    a digital signature inside the VBA project of Office files.
 
-    The PFX certificate can be generated using:
+    This is the ONLY method that produces a signature visible under:
+      Alt+F11 -> Tools -> Digital Signature in Excel/Word.
+
+    Neither Set-AuthenticodeSignature nor osslsigncode can produce valid
+    VBA project signatures - they create Authenticode envelope signatures
+    which Office ignores for VBA macro trust decisions.
+
+    Prerequisites:
+      - Windows with Microsoft Office installed (provides msosip.dll)
+      - Windows SDK (provides signtool.exe)
+      - A code-signing PFX certificate
+
+    Generate a PFX certificate:
         python -m cli.macro_sign_cli generate-pfx
-    Or downloaded from the service:
+    Or download from the service:
         GET /api/v1/snow/certs/{name}/pfx
 
 .PARAMETER File
@@ -32,9 +45,6 @@
 
 .EXAMPLE
     .\sign-vba.ps1 -File "report.xlsm" -PfxFile "certs\default.pfx" -OutputFile "report_signed.xlsm"
-
-.EXAMPLE
-    .\sign-vba.ps1 -File "macros.docm" -PfxFile "certs\default.pfx" -HashAlgorithm SHA512
 #>
 
 param(
@@ -54,12 +64,83 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+# ---------------------------------------------------------------------------
+# Prerequisite checks
+# ---------------------------------------------------------------------------
+
+Write-Host "Macro Sign Service - VBA Project Signing (signtool + Office SIP)" -ForegroundColor Cyan
+Write-Host "=================================================================" -ForegroundColor Cyan
+Write-Host ""
+
+# Check signtool
+$signtool = $null
+$signtoolPath = Get-Command signtool -ErrorAction SilentlyContinue
+if ($signtoolPath) {
+    $signtool = $signtoolPath.Source
+} else {
+    # Search Windows SDK paths
+    $sdkPaths = @(
+        "C:\Program Files (x86)\Windows Kits\10\bin",
+        "C:\Program Files\Windows Kits\10\bin"
+    )
+    foreach ($sdkBase in $sdkPaths) {
+        if (Test-Path $sdkBase) {
+            $versions = Get-ChildItem $sdkBase -Directory | Sort-Object Name -Descending
+            foreach ($ver in $versions) {
+                $candidate = Join-Path $ver.FullName "x64\signtool.exe"
+                if (Test-Path $candidate) {
+                    $signtool = $candidate
+                    break
+                }
+            }
+            if ($signtool) { break }
+        }
+    }
+}
+
+if (-not $signtool) {
+    Write-Error "signtool.exe not found. Install Windows SDK: https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/"
+    exit 1
+}
+Write-Host "signtool: $signtool" -ForegroundColor Green
+
+# Check Office SIP DLL
+$sipFound = $false
+$sipPaths = @(
+    "C:\Program Files\Microsoft Office\root\Office16\msosip.dll",
+    "C:\Program Files (x86)\Microsoft Office\root\Office16\msosip.dll",
+    "C:\Program Files\Microsoft Office\Office16\msosip.dll",
+    "C:\Program Files (x86)\Microsoft Office\Office16\msosip.dll"
+)
+foreach ($sp in $sipPaths) {
+    if (Test-Path $sp) {
+        Write-Host "Office SIP: $sp" -ForegroundColor Green
+        $sipFound = $true
+        break
+    }
+}
+if (-not $sipFound) {
+    # Check registry
+    try {
+        $regDll = Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Cryptography\OID\EncodingType 0\CryptSIPDllVerifyIndirectData\{000C10F1-0000-0000-C000-000000000046}" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Dll
+        if ($regDll) {
+            Write-Host "Office SIP (registry): $regDll" -ForegroundColor Green
+            $sipFound = $true
+        }
+    } catch {}
+
+    if (-not $sipFound) {
+        Write-Host "WARNING: Office SIP DLLs not found. signtool may not produce valid VBA signatures." -ForegroundColor Yellow
+        Write-Host "Install Microsoft Office to register the Office SIP DLLs." -ForegroundColor Yellow
+    }
+}
+Write-Host ""
+
 # Validate inputs
 if (-not (Test-Path $File)) {
     Write-Error "File not found: $File"
     exit 1
 }
-
 if (-not (Test-Path $PfxFile)) {
     Write-Error "PFX certificate not found: $PfxFile"
     exit 1
@@ -68,17 +149,15 @@ if (-not (Test-Path $PfxFile)) {
 # If output file specified, copy the input file first
 if ($OutputFile -and $OutputFile -ne $File) {
     Copy-Item -Path $File -Destination $OutputFile -Force
-    $TargetFile = $OutputFile
+    $TargetFile = (Resolve-Path $OutputFile).Path
 } else {
-    $TargetFile = $File
+    $TargetFile = (Resolve-Path $File).Path
 }
 
-Write-Host "Macro Sign Service - VBA Project Signing" -ForegroundColor Cyan
-Write-Host "=========================================" -ForegroundColor Cyan
-Write-Host ""
+# ---------------------------------------------------------------------------
+# Show certificate details
+# ---------------------------------------------------------------------------
 
-# Load the PFX certificate
-Write-Host "Loading certificate from: $PfxFile"
 $securePassword = ConvertTo-SecureString -String $PfxPassword -AsPlainText -Force
 $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
     (Resolve-Path $PfxFile).Path,
@@ -86,82 +165,90 @@ $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate
     [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::Exportable
 )
 
-# Display certificate info
-Write-Host ""
 Write-Host "Certificate Details:" -ForegroundColor Green
 Write-Host "  Subject:     $($cert.Subject)"
 Write-Host "  Issuer:      $($cert.Issuer)"
 Write-Host "  Thumbprint:  $($cert.Thumbprint)"
 Write-Host "  Valid From:  $($cert.NotBefore)"
 Write-Host "  Valid Until: $($cert.NotAfter)"
-Write-Host "  Has Private Key: $($cert.HasPrivateKey)"
-Write-Host ""
+Write-Host "  Has Key:     $($cert.HasPrivateKey)"
 
-# Verify the certificate has a private key
-if (-not $cert.HasPrivateKey) {
-    Write-Error "Certificate does not have a private key. Cannot sign."
-    exit 1
-}
-
-# Check for Code Signing EKU
+# Check Code Signing EKU
 $codeSigningOid = "1.3.6.1.5.5.7.3.3"
 $hasCodeSigning = $false
 foreach ($ext in $cert.Extensions) {
     if ($ext -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension]) {
         foreach ($eku in $ext.EnhancedKeyUsages) {
-            if ($eku.Value -eq $codeSigningOid) {
-                $hasCodeSigning = $true
-                break
-            }
+            if ($eku.Value -eq $codeSigningOid) { $hasCodeSigning = $true; break }
         }
     }
 }
-
 if ($hasCodeSigning) {
-    Write-Host "  Code Signing EKU: Present" -ForegroundColor Green
+    Write-Host "  Code Signing: YES" -ForegroundColor Green
 } else {
-    Write-Host "  Code Signing EKU: NOT FOUND (signing may fail)" -ForegroundColor Yellow
+    Write-Host "  Code Signing: NO (may fail)" -ForegroundColor Yellow
 }
 Write-Host ""
 
-# Sign the file
-Write-Host "Signing file: $TargetFile"
+# ---------------------------------------------------------------------------
+# Sign with signtool
+# ---------------------------------------------------------------------------
+
+Write-Host "Signing: $TargetFile" -ForegroundColor Cyan
 Write-Host "Algorithm: $HashAlgorithm"
 Write-Host ""
 
-$result = Set-AuthenticodeSignature `
-    -FilePath (Resolve-Path $TargetFile).Path `
-    -Certificate $cert `
-    -HashAlgorithm $HashAlgorithm
+$signArgs = @("sign", "/f", (Resolve-Path $PfxFile).Path, "/fd", $HashAlgorithm, "/v")
+if ($PfxPassword) {
+    $signArgs += @("/p", $PfxPassword)
+}
+$signArgs += $TargetFile
 
-# Check result
-Write-Host "Signing Result:" -ForegroundColor Cyan
-Write-Host "  Status:        $($result.Status)"
-Write-Host "  Status Message: $($result.StatusMessage)"
+Write-Host "Running: signtool $($signArgs[0..3] -join ' ') ... $([System.IO.Path]::GetFileName($TargetFile))"
+Write-Host ""
 
-if ($result.Status -eq "Valid") {
+$process = Start-Process -FilePath $signtool -ArgumentList $signArgs -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$env:TEMP\signtool_out.txt" -RedirectStandardError "$env:TEMP\signtool_err.txt"
+
+$stdout = Get-Content "$env:TEMP\signtool_out.txt" -Raw -ErrorAction SilentlyContinue
+$stderr = Get-Content "$env:TEMP\signtool_err.txt" -Raw -ErrorAction SilentlyContinue
+
+if ($stdout) { Write-Host $stdout }
+if ($stderr) { Write-Host $stderr -ForegroundColor Red }
+
+if ($process.ExitCode -eq 0) {
     Write-Host ""
-    Write-Host "SUCCESS: File signed successfully!" -ForegroundColor Green
+    Write-Host "SUCCESS: File signed with signtool + Office SIP!" -ForegroundColor Green
     Write-Host "  Signed file: $TargetFile" -ForegroundColor Green
     Write-Host ""
+
+    # Verify
+    Write-Host "Verifying signature..." -ForegroundColor Cyan
+    $verifyArgs = @("verify", "/pa", "/v", $TargetFile)
+    $verifyProcess = Start-Process -FilePath $signtool -ArgumentList $verifyArgs -NoNewWindow -Wait -PassThru -RedirectStandardOutput "$env:TEMP\signtool_verify.txt" -RedirectStandardError "$env:TEMP\signtool_verify_err.txt"
+    $verifyOut = Get-Content "$env:TEMP\signtool_verify.txt" -Raw -ErrorAction SilentlyContinue
+    if ($verifyOut) { Write-Host $verifyOut }
+
+    if ($verifyProcess.ExitCode -eq 0) {
+        Write-Host "Verification: PASSED" -ForegroundColor Green
+    } else {
+        Write-Host "Verification: FAILED (signature may not be recognized by Office)" -ForegroundColor Yellow
+    }
+
+    Write-Host ""
     Write-Host "To verify in Excel/Word:" -ForegroundColor Yellow
-    Write-Host "  1. Open the file"
+    Write-Host "  1. Open the file in Excel/Word"
     Write-Host "  2. Press Alt+F11 to open VBA Editor"
     Write-Host "  3. Go to Tools -> Digital Signature"
-    Write-Host "  4. The certificate should be displayed"
-    Write-Host ""
-
-    # Show signature details
-    $sig = Get-AuthenticodeSignature -FilePath (Resolve-Path $TargetFile).Path
-    Write-Host "Signature Verification:" -ForegroundColor Cyan
-    Write-Host "  Signer: $($sig.SignerCertificate.Subject)"
-    Write-Host "  Thumbprint: $($sig.SignerCertificate.Thumbprint)"
-    Write-Host "  Valid: $($sig.Status -eq 'Valid')"
+    Write-Host "  4. The certificate '$($cert.Subject)' should be displayed"
 
     exit 0
 } else {
     Write-Host ""
-    Write-Host "FAILED: Signing was not successful." -ForegroundColor Red
-    Write-Host "  Error: $($result.StatusMessage)" -ForegroundColor Red
+    Write-Host "FAILED: signtool exited with code $($process.ExitCode)" -ForegroundColor Red
+    if (-not $sipFound) {
+        Write-Host ""
+        Write-Host "LIKELY CAUSE: Office SIP DLLs are not registered." -ForegroundColor Yellow
+        Write-Host "Install Microsoft Office to enable VBA project signing." -ForegroundColor Yellow
+    }
     exit 1
 }
