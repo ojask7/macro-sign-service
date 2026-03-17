@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 820 620" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <style>
+      .box { rx: 8; ry: 8; stroke-width: 2; }
+      .label { font-size: 13px; fill: #333; }
+      .title { font-size: 15px; font-weight: 600; fill: #fff; }
+      .subtitle { font-size: 11px; fill: #8899aa; }
+      .arrow { stroke: #667788; stroke-width: 2; fill: none; marker-end: url(#arrowhead); }
+      .arrow-label { font-size: 11px; fill: #556677; }
+    </style>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#667788"/>
+    </marker>
+    <linearGradient id="grad-blue" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4A90D9"/>
+      <stop offset="100%" stop-color="#357ABD"/>
+    </linearGradient>
+    <linearGradient id="grad-green" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5CB85C"/>
+      <stop offset="100%" stop-color="#449D44"/>
+    </linearGradient>
+    <linearGradient id="grad-orange" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#F0AD4E"/>
+      <stop offset="100%" stop-color="#EC971F"/>
+    </linearGradient>
+    <linearGradient id="grad-purple" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#8E6FBF"/>
+      <stop offset="100%" stop-color="#7B5EA7"/>
+    </linearGradient>
+    <linearGradient id="grad-teal" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5BC0DE"/>
+      <stop offset="100%" stop-color="#46B8DA"/>
+    </linearGradient>
+    <linearGradient id="grad-red" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#D9534F"/>
+      <stop offset="100%" stop-color="#C9302C"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="820" height="620" fill="#F7F9FC" rx="12"/>
+
+  <!-- Title -->
+  <text x="410" y="32" text-anchor="middle" font-size="18" font-weight="700" fill="#2C3E50">macro-sign-service v1 — Architecture</text>
+  <text x="410" y="52" text-anchor="middle" font-size="12" fill="#8899AA">Windows-native Office VBA macro signing service</text>
+
+  <!-- ================================================================ -->
+  <!-- SNOW / Client -->
+  <!-- ================================================================ -->
+  <rect x="310" y="70" width="200" height="46" class="box" fill="url(#grad-blue)" stroke="#357ABD"/>
+  <text x="410" y="90" text-anchor="middle" class="title">SNOW / Client</text>
+  <text x="410" y="106" text-anchor="middle" class="subtitle" fill="#D0DFEE">HTTP POST (multipart upload)</text>
+
+  <!-- Arrow: SNOW -> FastAPI -->
+  <path d="M 410 116 L 410 148" class="arrow"/>
+
+  <!-- ================================================================ -->
+  <!-- FastAPI main box -->
+  <!-- ================================================================ -->
+  <rect x="60" y="150" width="700" height="440" rx="10" ry="10" fill="#FFFFFF" stroke="#C8D6E5" stroke-width="2"/>
+  <rect x="60" y="150" width="700" height="36" rx="10" ry="10" fill="#2C3E50"/>
+  <rect x="60" y="170" width="700" height="16" fill="#2C3E50"/>
+  <text x="410" y="173" text-anchor="middle" class="title">FastAPI  —  Windows :8000</text>
+  <text x="740" y="173" text-anchor="end" font-size="11" fill="#8899AA">app/main.py</text>
+
+  <!-- ================================================================ -->
+  <!-- Row 1: routes.py -> validator.py -->
+  <!-- ================================================================ -->
+  <rect x="90" y="206" width="180" height="50" class="box" fill="url(#grad-green)" stroke="#449D44"/>
+  <text x="180" y="228" text-anchor="middle" class="title">routes.py</text>
+  <text x="180" y="246" text-anchor="middle" class="subtitle" fill="#D4EDD4">6 API endpoints</text>
+
+  <path d="M 270 231 L 340 231" class="arrow"/>
+  <text x="305" y="224" text-anchor="middle" class="arrow-label">validate</text>
+
+  <rect x="340" y="206" width="180" height="50" class="box" fill="url(#grad-teal)" stroke="#46B8DA"/>
+  <text x="430" y="228" text-anchor="middle" class="title">validator.py</text>
+  <text x="430" y="246" text-anchor="middle" class="subtitle" fill="#D0EEF5">ext, size, content scan</text>
+
+  <!-- config.py (right side) -->
+  <rect x="560" y="206" width="170" height="50" class="box" fill="#E8ECF1" stroke="#B0BEC5"/>
+  <text x="645" y="228" text-anchor="middle" font-size="13" font-weight="600" fill="#455A64">config.py</text>
+  <text x="645" y="246" text-anchor="middle" class="subtitle">MACRO_SIGN_* env vars</text>
+
+  <!-- ================================================================ -->
+  <!-- Arrow: routes -> signing decision -->
+  <!-- ================================================================ -->
+  <path d="M 180 256 L 180 290" class="arrow"/>
+
+  <!-- ================================================================ -->
+  <!-- Row 2: Signing split -->
+  <!-- ================================================================ -->
+
+  <!-- Decision diamond (simplified as text) -->
+  <text x="180" y="302" text-anchor="middle" font-size="12" font-weight="600" fill="#556677">File type?</text>
+
+  <!-- Left branch: Office files -->
+  <path d="M 140 308 L 100 340" class="arrow"/>
+  <text x="95" y="328" text-anchor="middle" class="arrow-label">Office</text>
+
+  <!-- Right branch: Text macros -->
+  <path d="M 220 308 L 260 340" class="arrow"/>
+  <text x="270" y="328" text-anchor="middle" class="arrow-label">Text</text>
+
+  <!-- Office signing box -->
+  <rect x="30" y="342" width="200" height="80" class="box" fill="url(#grad-orange)" stroke="#EC971F"/>
+  <text x="130" y="364" text-anchor="middle" class="title">signing.py</text>
+  <text x="130" y="382" text-anchor="middle" font-size="11" fill="#FFF5E0">signtool.exe sign</text>
+  <text x="130" y="398" text-anchor="middle" font-size="11" fill="#FFF5E0">+ Office SIP (msosip.dll)</text>
+  <text x="130" y="414" text-anchor="middle" class="subtitle" fill="#E8D5B0">.xlsm .docm .pptm .xlam</text>
+
+  <!-- Text macro signing box -->
+  <rect x="260" y="342" width="200" height="80" class="box" fill="url(#grad-purple)" stroke="#7B5EA7"/>
+  <text x="360" y="364" text-anchor="middle" class="title">signing.py</text>
+  <text x="360" y="382" text-anchor="middle" font-size="11" fill="#EDE0F7">RSA PKCS#1v15</text>
+  <text x="360" y="398" text-anchor="middle" font-size="11" fill="#EDE0F7">detached signature</text>
+  <text x="360" y="414" text-anchor="middle" class="subtitle" fill="#C9B8DC">.vba .bas .cls .frm</text>
+
+  <!-- ================================================================ -->
+  <!-- Row 2 right: certs.py -->
+  <!-- ================================================================ -->
+  <rect x="520" y="342" width="210" height="80" class="box" fill="url(#grad-green)" stroke="#449D44"/>
+  <text x="625" y="364" text-anchor="middle" class="title">certs.py</text>
+  <text x="625" y="382" text-anchor="middle" font-size="11" fill="#D4EDD4">PFX certificate store</text>
+  <text x="625" y="398" text-anchor="middle" font-size="11" fill="#D4EDD4">Auto-generate on first start</text>
+  <text x="625" y="414" text-anchor="middle" class="subtitle" fill="#A8D5A8">certs/*.pfx on disk</text>
+
+  <!-- Arrows: signing boxes -> certs -->
+  <path d="M 230 382 L 230 432 L 520 432 L 520 400" class="arrow" stroke-dasharray="6,3"/>
+  <path d="M 460 382 L 460 440 L 520 440 L 520 410" class="arrow" stroke-dasharray="6,3"/>
+  <text x="390" y="448" text-anchor="middle" class="arrow-label">load PFX</text>
+
+  <!-- ================================================================ -->
+  <!-- Row 3: Arrows down to audit -->
+  <!-- ================================================================ -->
+  <path d="M 130 422 L 130 470 L 300 486" class="arrow"/>
+  <path d="M 360 422 L 360 470 L 300 486" class="arrow"/>
+
+  <!-- Audit box -->
+  <rect x="200" y="478" width="220" height="56" class="box" fill="url(#grad-red)" stroke="#C9302C"/>
+  <text x="310" y="500" text-anchor="middle" class="title">audit.py</text>
+  <text x="310" y="518" text-anchor="middle" font-size="11" fill="#F5D0CF">SQLite append-only log (aiosqlite)</text>
+
+  <!-- SQLite icon/label -->
+  <rect x="470" y="478" width="100" height="56" class="box" fill="#E8ECF1" stroke="#B0BEC5"/>
+  <text x="520" y="504" text-anchor="middle" font-size="13" font-weight="600" fill="#455A64">audit.db</text>
+  <text x="520" y="520" text-anchor="middle" class="subtitle">SQLite</text>
+  <path d="M 420 506 L 470 506" class="arrow"/>
+
+  <!-- ================================================================ -->
+  <!-- Row 4: Response -->
+  <!-- ================================================================ -->
+  <path d="M 310 534 L 310 560" class="arrow"/>
+
+  <rect x="200" y="560" width="220" height="22" rx="6" ry="6" fill="url(#grad-blue)" stroke="#357ABD"/>
+  <text x="310" y="576" text-anchor="middle" font-size="12" font-weight="600" fill="#FFF">HTTP Response (signed file)</text>
+
+  <!-- ================================================================ -->
+  <!-- Legend -->
+  <!-- ================================================================ -->
+  <rect x="620" y="478" width="120" height="100" rx="6" ry="6" fill="#F0F3F7" stroke="#C8D6E5"/>
+  <text x="680" y="496" text-anchor="middle" font-size="11" font-weight="600" fill="#455A64">Key</text>
+  <rect x="632" y="506" width="12" height="12" fill="url(#grad-orange)" rx="2"/>
+  <text x="650" y="516" class="subtitle" fill="#333">signtool path</text>
+  <rect x="632" y="524" width="12" height="12" fill="url(#grad-purple)" rx="2"/>
+  <text x="650" y="534" class="subtitle" fill="#333">RSA path</text>
+  <rect x="632" y="542" width="12" height="12" fill="url(#grad-red)" rx="2"/>
+  <text x="650" y="552" class="subtitle" fill="#333">audit log</text>
+  <rect x="632" y="560" width="12" height="12" fill="url(#grad-green)" rx="2"/>
+  <text x="650" y="570" class="subtitle" fill="#333">API / certs</text>
+</svg>
